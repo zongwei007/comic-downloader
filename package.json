@@ -2,8 +2,9 @@
   "name": "comic-downloader",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "src/main.js",
   "scripts": {
+    "build": "rollup --config",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -15,5 +16,8 @@
   "bugs": {
     "url": "https://github.com/zongwei007/comic-downloader/issues"
   },
-  "homepage": "https://github.com/zongwei007/comic-downloader#readme"
+  "homepage": "https://github.com/zongwei007/comic-downloader#readme",
+  "devDependencies": {
+    "rollup": "^2.39.0"
+  }
 }
