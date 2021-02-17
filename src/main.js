@@ -1,4 +1,5 @@
-import { appendButton } from './ui';
-import { resolveAllUrl } from './resolve';
+import PackageButton from './components/PackageButton';
 
-appendButton(resolveAllUrl);
+const panel = document.querySelector('.asTBcell.uwthumb');
+
+panel.appendChild(PackageButton());

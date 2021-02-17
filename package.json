@@ -18,6 +18,8 @@
   },
   "homepage": "https://github.com/zongwei007/comic-downloader#readme",
   "devDependencies": {
-    "rollup": "^2.39.0"
+    "rollup": "^2.39.0",
+    "rollup-plugin-embed-css": "^1.0.21",
+    "rollup-plugin-string": "^3.0.0"
   }
 }
