@@ -4,6 +4,7 @@
   "description": "",
   "main": "src/main.js",
   "scripts": {
+    "dev": "rollup --config --watch",
     "build": "rollup --config",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -18,8 +19,12 @@
   },
   "homepage": "https://github.com/zongwei007/comic-downloader#readme",
   "devDependencies": {
+    "@rollup/plugin-commonjs": "^17.1.0",
+    "@rollup/plugin-node-resolve": "^11.2.0",
     "rollup": "^2.39.0",
-    "rollup-plugin-embed-css": "^1.0.21",
     "rollup-plugin-string": "^3.0.0"
+  },
+  "dependencies": {
+    "file-saver": "^2.0.5"
   }
 }

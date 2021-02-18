@@ -1,25 +1,47 @@
-import { parseHTML } from './util';
+import { parseHTML, formatPageNumber } from './util';
 
-function requestPage(url, options) {
-  return fetch(url, options).then(resp => resp.text());
+async function requestPage(url, options) {
+  const resp = await fetch(url, options);
+
+  return await resp.text();
 }
 
-export async function resolvePageUrl(indexPageUrl) {
-  const content = await requestPage(indexPageUrl);
+export async function resolvePage(pageUrl) {
+  console.log(`[CD] 正在解析 ${pageUrl}`);
 
-  return [...parseHTML(content)]
-    .reduce((memo, ele) => {
-      if (ele.id !== 'bodywrap') {
-        return memo;
-      }
-
-      return [...memo, ...ele.querySelectorAll('.gallary_wrap .gallary_item .pic_box a')];
-    }, [])
-    .map(link => link.href);
-}
-
-export async function resolveImageUrl(pageUrl) {
   const content = await requestPage(pageUrl);
+  const doms = [...parseHTML(content)];
+  const imageUrl = doms.find(ele => ele.id === 'photo_body').querySelector('#imgarea #picarea').src;
+  const pagination = doms.find(ele => ele.className === 'newpagewrap');
+  const pageLabels = pagination.querySelector('.newpagelabel').innerText.split('/');
+  const fileName = /[^/]+(?!.*\/)/.exec(imageUrl)[0];
 
-  return [...parseHTML(content)].find(ele => ele.id === 'photo_body').querySelector('#imgarea #picarea').src;
+  return {
+    pageUrl,
+    imageUrl,
+    fileName,
+    index: parseInt(pageLabels[0]),
+    indexName: formatPageNumber(pageLabels[0], pageLabels[1].length) + '.' + /[^.]+(?!.*\.)/.exec(fileName),
+    state: 'pending',
+    total: parseInt(pageLabels[1]),
+    nextPage: pagination.querySelectorAll('.newpage .btntuzao').item(1).href,
+  };
+}
+
+export async function resolveAllPage(nextPage, onChange) {
+  const pages = [];
+  const pageUrls = new Set();
+
+  do {
+    const pageInfo = await resolvePage(nextPage);
+
+    onChange(pageInfo);
+
+    pages.push(pageInfo);
+    pageUrls.add(pageInfo.pageUrl);
+
+    nextPage = pageInfo.nextPage;
+  } while (!pageUrls.has(nextPage));
+
+  return pages;
 }

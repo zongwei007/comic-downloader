@@ -21,3 +21,13 @@ export async function sleep(time) {
     setTimeout(() => resolve(), time);
   });
 }
+
+export function formatPageNumber(num, length) {
+  let name = String(num);
+
+  for (let len = length - name.length; len > 0; len--) {
+    name = '0' + name;
+  }
+
+  return name;
+}

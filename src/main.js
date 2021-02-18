@@ -1,5 +1,7 @@
-import PackageButton from './components/PackageButton';
+import './components/ResolveButton';
+import './components/ResolveBox';
+import './components/ResolveItem';
 
 const panel = document.querySelector('.asTBcell.uwthumb');
 
-panel.appendChild(PackageButton());
+panel.appendChild(document.createElement('a', { is: 'resolve-button' }));

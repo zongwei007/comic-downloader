@@ -1,0 +1,145 @@
+<style>
+  .container {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    width: 33%;
+    height: 30%;
+    padding: 0.5rem;
+    background: #666;
+    border-top-right-radius: 5px;
+    border-top-left-radius: 5px;
+    border: 1px solid #333;
+    opacity: 98%;
+    color: #eee;
+  }
+
+  .container h4 {
+    margin: 0;
+  }
+
+  .btn-close,
+  .btn-folder {
+    float: right;
+    cursor: pointer;
+    padding: 0 5px;
+  }
+
+  .btn-folder::after {
+    display: inline;
+    content: '▼';
+  }
+
+  .spinner {
+    display: none;
+  }
+
+  .spinner::after {
+    content: '';
+    display: inline;
+    animation: loading-spinner;
+    animation-duration: 5s;
+    animation-iteration-count: infinite;
+  }
+
+  @keyframes loading-spinner {
+    20% {
+      content: '.';
+    }
+
+    40% {
+      content: '..';
+    }
+
+    60% {
+      content: '...';
+    }
+
+    80% {
+      content: '....';
+    }
+
+    100% {
+      content: '.....';
+    }
+  }
+
+  .loading .spinner {
+    display: inline;
+  }
+
+  .list {
+    width: 100%;
+    max-height: calc(100% - 60px);
+    overflow: auto;
+  }
+
+  .list .row {
+    display: flex;
+  }
+
+  .toolbar {
+    height: 60px;
+    display: none;
+    padding-top: 10px;
+  }
+
+  .toolbar > div {
+    flex: 1;
+  }
+
+  .toolbar > .buttons {
+    text-align: right;
+  }
+
+  .status-successed {
+    color: #126612;
+  }
+
+  .status-failed {
+    color: #b60202;
+  }
+
+  .fold .btn-folder::after {
+    content: '▲';
+  }
+
+  .fold.container {
+    height: 15px;
+  }
+
+  .fold .list,
+  .fold .toolbar {
+    display: none;
+  }
+
+  .resolved .toolbar {
+    display: flex;
+  }
+</style>
+<div class="container">
+  <h4>
+    <span class="title"></span>
+    <span class="spinner"></span>
+    <a class="btn-close">╳</a>
+    <a class="btn-folder"></a>
+  </h4>
+  <hr />
+  <div class="list">
+    <resolve-item class="header">
+      <span slot="index">序号</span>
+      <span slot="url">页面</span>
+      <span slot="state">状态</span>
+    </resolve-item>
+  </div>
+  <div class="toolbar">
+    <div class="download-status">
+      下载成功：<span class="status-successed">0</span>/<span class="status-total">0</span> 下载失败:
+      <span class="status-failed">0</span>
+    </div>
+    <div class="buttons">
+      <button class="btn-export-url">导出 URL</button>
+      <button class="btn-export-zip">打包下载</button>
+    </div>
+  </div>
+</div>
