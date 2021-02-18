@@ -44,7 +44,7 @@ function downloadImage(imageUrl, { headers, onprogress }) {
       method: 'GET',
       url: imageUrl,
       responseType: 'arraybuffer',
-      timeout: 300000,
+      timeout: 5 * 60 * 1000,
       headers,
       onprogress,
       onload: function (res) {
