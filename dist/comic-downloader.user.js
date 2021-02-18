@@ -2,7 +2,7 @@
 // @name         批量打包下载漫画
 // @namespace    http://tampermonkey.net/
 // @version      1.0.0
-// @description  批量打包下载漫画
+// @description  解析漫画网站图片地址，下载图片并打包为 zip 文件，或导出为文本
 // @match        www.wnacg.org/*
 // @grant        GM_xmlhttpRequest
 // @require      https://cdn.jsdelivr.net/npm/jszip@3.6.0/dist/jszip.min.js#sha256-MB+WKZmHMme2BRVKpDuIbfs6VlSdUIAY1VroUmE+p8g=
@@ -89,6 +89,65 @@
     return pages;
   }
 
+  customElements.define(
+    'resolve-button',
+    class extends HTMLAnchorElement {
+      constructor() {
+        super();
+
+        this.addEventListener('click', this.resolve);
+      }
+
+      connectedCallback() {
+        this.className = 'btn';
+        this.style = 'width: 130px';
+        this.innerText = '解析图片地址';
+      }
+
+      resolve(event) {
+        event.preventDefault();
+
+        (async () => {
+          const title = document.querySelector('.userwrap h2').innerText;
+
+          const resolveBox = document.createElement('resolve-box');
+
+          resolveBox.setComicInfo({
+            title,
+            url: location.href,
+            startedAt: new Date(),
+            labels: [...document.querySelectorAll('.asTBcell.uwconn > label')].map(node => node.innerText.trim()),
+            tags: [...document.querySelectorAll('.asTBcell.uwconn .addtags .tagshow')].map(node => node.innerText.trim()),
+            introduction: document.querySelector('.asTBcell.uwconn > p').innerText.substring(3),
+          });
+
+          document.body.appendChild(resolveBox);
+
+          resolveBox.loading = true;
+          resolveBox.title = '正在解析';
+
+          console.log(`[CD] 开始解析 ${title}`);
+
+          const firstPageUrl = document.querySelector('.gallary_wrap .gallary_item .pic_box a').href;
+
+          const pages = await resolveAllPage(firstPageUrl, pageInfo => {
+            resolveBox.appendPage(pageInfo);
+          });
+
+          resolveBox.setComicInfo({
+            pages,
+            finishedAt: new Date(),
+          });
+
+          resolveBox.loading = false;
+          resolveBox.title = '解析完毕';
+          resolveBox.showButtons = true;
+        })();
+      }
+    },
+    { extends: 'a' }
+  );
+
   var commonjsGlobal = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : {};
 
   function createCommonjsModule(fn) {
@@ -109,11 +168,14 @@
 标签：\${tags.join(' ')}
 简介：\${introduction}
 
+页面地址：
+\${pages.map(page => page.pageUrl).join('\\n')}
+
 图片地址：
 \${pages.map(page => page.imageUrl).join('\\n')}
 
 文件名映射：
-\${pages.map(page => page.fileName + '    ' + page.indexName).join('\\n')}
+\${pages.map(page => page.fileName + ' ' + page.indexName).join('\\n')}
 `);
 
   async function exportUrl(info) {
@@ -122,33 +184,73 @@
     FileSaver_min.saveAs(blob, `${info.title}.info.txt`);
   }
 
-  async function exportZip(info) {
-    const zip = new JSZip();
+  async function exportZip(zip, info, { onProgress, onLoaded, onFail }) {
     const folder = zip.folder(info.title);
 
     for (const page of info.pages) {
-      const buffer = await downloadImage(page.imageUrl, {
-        headers: { Referer: page.pageUrl, 'X-Alt-Referer': page.pageUrl },
-      });
+      if (page.state === 'loaded') {
+        continue;
+      }
 
-      folder.file(page.indexName, buffer);
+      try {
+        const buffer = await downloadImage(page.imageUrl, {
+          onProgress: info => onProgress({ page, ...info }),
+          headers: { Referer: page.pageUrl, 'X-Alt-Referer': page.pageUrl, Cookie: document.cookie },
+        });
+
+        onLoaded({ page, buffer });
+
+        folder.file(page.indexName, buffer);
+      } catch (error) {
+        onFail({ page, error });
+      }
     }
 
-    const blob = await zip.generateAsync({ type: 'blob' });
+    if (info.pages.every(page => page.state === 'loaded')) {
+      const blob = await zip.generateAsync({ type: 'blob' });
 
-    FileSaver_min.saveAs(blob, `${info.title}.zip`);
+      FileSaver_min.saveAs(blob, `${info.title}.zip`);
+
+      return true;
+    }
+
+    return false;
   }
 
-  function downloadImage(imageUrl, { headers, onprogress }) {
+  function downloadImage(imageUrl, { onProgress, ...options }) {
     return new Promise((resolve, reject) => {
+      let lastProgress = 0;
+      let lastTimestamp = new Date().getTime();
+
       GM_xmlhttpRequest({
+        ...options,
         method: 'GET',
         url: imageUrl,
         responseType: 'arraybuffer',
         timeout: 5 * 60 * 1000,
         headers,
-        onprogress,
-        onload: function (res) {
+        onprogress(res) {
+          let speedText = '0 KB/s';
+
+          const now = new Date().getTime();
+          const speedKBs = res.lengthComputable
+            ? Number((res.loaded - lastProgress) / (now - lastTimestamp) / 1.024)
+            : -1;
+
+          if (now - lastTimestamp >= 1000 || lastProgress === 0) {
+            speedText = res.lengthComputable ? `${speedKBs.toFixed(2)} KB/s` : '';
+            lastProgress = res.loaded;
+            lastTimestamp = now;
+          }
+
+          onProgress({
+            loaded: res.loaded,
+            total: res.total,
+            progress: res.lengthComputable ? res.loaded / res.total : '',
+            progressText: speedText,
+          });
+        },
+        onload(res) {
           try {
             // cache them to reduce waiting time and CPU usage on Chrome with Tampermonkey
             // (Tampermonkey uses a dirty way to give res.response, transfer string to arraybuffer every time)
@@ -199,89 +301,29 @@
             reject(new Error(`[CD] Image ${imageUrl} download fail: Unknown error (Please send feedback)`));
           }
         },
-        onerror: function (res) {
+        onerror(res) {
           reject(new Error(`[CD] Image ${imageUrl} download fail: Network Error`));
         },
-        ontimeout: function (res) {
+        ontimeout(res) {
           reject(new Error(`[CD] Image ${imageUrl} download fail: Timed Out`));
         },
       });
     });
   }
 
-  customElements.define(
-    'resolve-button',
-    class extends HTMLAnchorElement {
-      constructor() {
-        super();
+  var boxRoot = "<style>\n  .container {\n    position: fixed;\n    right: 0;\n    bottom: 0;\n    width: 33%;\n    height: 30%;\n    padding: 0.5rem;\n    background: #666;\n    border-top-right-radius: 5px;\n    border-top-left-radius: 5px;\n    border: 1px solid #333;\n    opacity: 98%;\n    color: #eee;\n  }\n\n  .container h4 {\n    margin: 0;\n  }\n\n  .btn-close,\n  .btn-folder {\n    float: right;\n    cursor: pointer;\n    padding: 0 5px;\n  }\n\n  .btn-folder::after {\n    display: inline;\n    content: '▼';\n  }\n\n  .spinner {\n    display: none;\n  }\n\n  .spinner::after {\n    content: '';\n    display: inline;\n    animation: loading-spinner;\n    animation-duration: 5s;\n    animation-iteration-count: infinite;\n  }\n\n  @keyframes loading-spinner {\n    20% {\n      content: '.';\n    }\n\n    40% {\n      content: '..';\n    }\n\n    60% {\n      content: '...';\n    }\n\n    80% {\n      content: '....';\n    }\n\n    100% {\n      content: '.....';\n    }\n  }\n\n  .loading .spinner {\n    display: inline;\n  }\n\n  .list {\n    width: 100%;\n    max-height: calc(100% - 60px);\n    overflow: auto;\n  }\n\n  .list .row {\n    display: flex;\n  }\n\n  .progress {\n    height: 15px;\n    overflow: hidden;\n    border: 1px solid #eee;\n  }\n\n  .progress > .progress-bar {\n    float: left;\n    height: 100%;\n    color: #333;\n    text-align: center;\n    background-color: #eee;\n  }\n\n  .toolbar {\n    height: 60px;\n    display: none;\n    padding-top: 10px;\n  }\n\n  .toolbar > div {\n    flex: 1;\n  }\n\n  .toolbar > .buttons {\n    text-align: right;\n  }\n\n  .status-successed {\n    color: #126612;\n  }\n\n  .status-failed {\n    color: #b60202;\n  }\n\n  .fold .btn-folder::after {\n    content: '▲';\n  }\n\n  .fold.container {\n    height: 15px;\n  }\n\n  .fold .list,\n  .fold .toolbar {\n    display: none;\n  }\n\n  .resolved .toolbar {\n    display: flex;\n  }\n</style>\n<div class=\"container\">\n  <h4>\n    <span class=\"title\"></span>\n    <span class=\"spinner\"></span>\n    <a class=\"btn-close\">╳</a>\n    <a class=\"btn-folder\"></a>\n  </h4>\n  <hr />\n  <div class=\"list\">\n    <resolve-item class=\"header\">\n      <span slot=\"index\">序号</span>\n      <span slot=\"url\">页面</span>\n      <span slot=\"state\">状态</span>\n    </resolve-item>\n  </div>\n  <div class=\"toolbar\">\n    <div class=\"download-status\">\n      已下载：<span class=\"status-successed\">0</span> / <span class=\"status-total\">0</span>\n    </div>\n    <div class=\"buttons\">\n      <button class=\"btn-export-url\">导出 URL</button>\n      <button class=\"btn-export-zip\">打包下载</button>\n    </div>\n  </div>\n</div>\n";
 
-        this.addEventListener('click', this.resolve);
-
-        this.comicInfo = {
-          url: location.href,
-        };
-      }
-
-      connectedCallback() {
-        this.className = 'btn';
-        this.style = 'width: 130px';
-        this.innerText = '解析图片地址';
-      }
-
-      resolve(event) {
-        event.preventDefault();
-
-        (async () => {
-          const title = (this.comicInfo.title = document.querySelector('.userwrap h2').innerText);
-          this.comicInfo.startedAt = new Date();
-          this.comicInfo.labels = [...document.querySelectorAll('.asTBcell.uwconn > label')].map(node =>
-            node.innerText.trim()
-          );
-          this.comicInfo.tags = [...document.querySelectorAll('.asTBcell.uwconn .addtags .tagshow')].map(node =>
-            node.innerText.trim()
-          );
-          this.comicInfo.introduction = document.querySelector('.asTBcell.uwconn > p').innerText.substring(3);
-
-          const resolveBox = document.createElement('resolve-box');
-
-          document.body.appendChild(resolveBox);
-          resolveBox.container
-            .querySelector('.btn-export-url')
-            .addEventListener('click', () => exportUrl(this.comicInfo));
-          resolveBox.container
-            .querySelector('.btn-export-zip')
-            .addEventListener('click', () => exportZip(this.comicInfo));
-
-          resolveBox.loading = true;
-          resolveBox.title = '正在解析';
-
-          console.log(`[CD] 开始解析 ${title}`);
-
-          const firstPageUrl = document.querySelector('.gallary_wrap .gallary_item .pic_box a').href;
-
-          this.comicInfo.pages = await resolveAllPage(firstPageUrl, pageInfo => {
-            if (!this.comicInfo.pageTotal) {
-              this.comicInfo.pageTotal = resolveBox.total = pageInfo.total;
-            }
-
-            resolveBox.appendPage(pageInfo);
-          });
-
-          this.comicInfo.finishedAt = new Date();
-
-          resolveBox.loading = false;
-          resolveBox.title = '解析完毕';
-          resolveBox.showButtons = true;
-        })();
-      }
-    },
-    { extends: 'a' }
-  );
-
-  var boxRoot = "<style>\n  .container {\n    position: fixed;\n    right: 0;\n    bottom: 0;\n    width: 33%;\n    height: 30%;\n    padding: 0.5rem;\n    background: #666;\n    border-top-right-radius: 5px;\n    border-top-left-radius: 5px;\n    border: 1px solid #333;\n    opacity: 98%;\n    color: #eee;\n  }\n\n  .container h4 {\n    margin: 0;\n  }\n\n  .btn-close,\n  .btn-folder {\n    float: right;\n    cursor: pointer;\n    padding: 0 5px;\n  }\n\n  .btn-folder::after {\n    display: inline;\n    content: '▼';\n  }\n\n  .spinner {\n    display: none;\n  }\n\n  .spinner::after {\n    content: '';\n    display: inline;\n    animation: loading-spinner;\n    animation-duration: 5s;\n    animation-iteration-count: infinite;\n  }\n\n  @keyframes loading-spinner {\n    20% {\n      content: '.';\n    }\n\n    40% {\n      content: '..';\n    }\n\n    60% {\n      content: '...';\n    }\n\n    80% {\n      content: '....';\n    }\n\n    100% {\n      content: '.....';\n    }\n  }\n\n  .loading .spinner {\n    display: inline;\n  }\n\n  .list {\n    width: 100%;\n    max-height: calc(100% - 60px);\n    overflow: auto;\n  }\n\n  .list .row {\n    display: flex;\n  }\n\n  .toolbar {\n    height: 60px;\n    display: none;\n    padding-top: 10px;\n  }\n\n  .toolbar > div {\n    flex: 1;\n  }\n\n  .toolbar > .buttons {\n    text-align: right;\n  }\n\n  .status-successed {\n    color: #126612;\n  }\n\n  .status-failed {\n    color: #b60202;\n  }\n\n  .fold .btn-folder::after {\n    content: '▲';\n  }\n\n  .fold.container {\n    height: 15px;\n  }\n\n  .fold .list,\n  .fold .toolbar {\n    display: none;\n  }\n\n  .resolved .toolbar {\n    display: flex;\n  }\n</style>\n<div class=\"container\">\n  <h4>\n    <span class=\"title\"></span>\n    <span class=\"spinner\"></span>\n    <a class=\"btn-close\">╳</a>\n    <a class=\"btn-folder\"></a>\n  </h4>\n  <hr />\n  <div class=\"list\">\n    <resolve-item class=\"header\">\n      <span slot=\"index\">序号</span>\n      <span slot=\"url\">页面</span>\n      <span slot=\"state\">状态</span>\n    </resolve-item>\n  </div>\n  <div class=\"toolbar\">\n    <div class=\"download-status\">\n      下载成功：<span class=\"status-successed\">0</span>/<span class=\"status-total\">0</span> 下载失败:\n      <span class=\"status-failed\">0</span>\n    </div>\n    <div class=\"buttons\">\n      <button class=\"btn-export-url\">导出 URL</button>\n      <button class=\"btn-export-zip\">打包下载</button>\n    </div>\n  </div>\n</div>\n";
+  const progressTemplate = tpl(`
+<div class="progress">
+  <div class="progress-bar" style="width:\${progress}%">\${progressText}</div>
+</div>
+`);
 
   const STATE_MAP = {
+    error: '下载失败',
     pending: '准备下载',
+    loading: '下载中',
+    loaded: '已下载',
   };
 
   customElements.define(
@@ -292,25 +334,101 @@
 
         this.attachShadow({ mode: 'open' });
         this.shadowRoot.innerHTML = boxRoot;
-        this.container = this.shadowRoot.querySelector('.container');
+        this.comicInfo = {};
+      }
 
+      connectedCallback() {
+        this.container = this.shadowRoot.querySelector('.container');
         this.container.querySelector('.btn-close').addEventListener('click', () => this.remove());
         this.container
           .querySelector('.btn-folder')
           .addEventListener('click', () => this.container.classList.toggle('fold'));
+        this.container.querySelector('.btn-export-url').addEventListener('click', () => exportUrl(this.comicInfo));
+        this.container.querySelector('.btn-export-zip').addEventListener('click', this.handleExportZip.bind(this));
+      }
+
+      setComicInfo(info) {
+        Object.assign(this.comicInfo, info);
       }
 
       appendPage(pageInfo) {
+        if (!this.comicInfo.pageTotal) {
+          this.comicInfo.pageTotal = this.total = pageInfo.total;
+        }
+
         const container = this.container.querySelector('.list');
-        container.innerHTML += `
-        <resolve-item>
+
+        container.insertAdjacentHTML(
+          'beforeend',
+          `<resolve-item id="resolve-image-${pageInfo.index}">
           <span slot="index">${pageInfo.index}</span>
           <span slot="url">${pageInfo.pageUrl}</span>
           <span slot="state">${STATE_MAP[pageInfo.state]}</span>
-        </resolve-item>
-      `;
+        </resolve-item>`
+        );
 
         container.scrollTo({ top: container.scrollHeight });
+      }
+
+      async handleExportZip() {
+        this.loading = true;
+        this.title = '正在打包';
+        this.loadedPage = new Set();
+
+        if (!this.zip) {
+          this.zip = new JSZip();
+        }
+
+        const flag = await exportZip(this.zip, this.comicInfo, {
+          onProgress: this.handleDownloadProgress.bind(this),
+          onLoaded: this.handleDownloadSuccess.bind(this),
+          onFail: this.handleDownloadFail.bind(this),
+        });
+
+        this.loading = false;
+
+        if (flag) {
+          this.title = '打包完毕';
+          this.zip = null;
+          this.remove();
+        } else {
+          this.title = '打包失败，请重试';
+        }
+      }
+
+      handleDownloadProgress({ page, progress, progressText }) {
+        const progressInfo = progress
+          ? progressTemplate({
+              progress: progress * 100,
+              progressText,
+            })
+          : null;
+
+        const pageItem = this.updatePageState(page, 'loading', progressInfo);
+        pageItem.scrollIntoView();
+      }
+
+      handleDownloadSuccess({ page }) {
+        this.loadedPage.add(page.pageUrl);
+        this.container.querySelector('.status-successed').innerText = this.loadedPage.size;
+
+        this.updatePageState(page, 'loaded');
+      }
+
+      handleDownloadFail({ page }) {
+        this.updatePageState(page, 'error');
+      }
+
+      updatePageState(page, state, info) {
+        page.state = state;
+
+        const pageItem = this.container.querySelector(`#resolve-image-${page.index}`);
+        const spans = [...pageItem.querySelectorAll('span')];
+
+        spans[1].innerHTML = info || page.pageUrl;
+        spans[2].innerText = STATE_MAP[state];
+
+        return pageItem;
       }
 
       set loading(flag) {
@@ -335,14 +453,6 @@
         } else {
           this.container.classList.remove('resolved');
         }
-      }
-
-      set successed(num) {
-        this.container.querySelector('.status-successed').innerText = num;
-      }
-
-      set failed(num) {
-        this.container.querySelector('.status-failed').innerText = num;
       }
     }
   );

@@ -1,5 +1,4 @@
 import { resolveAllPage } from '../resolve';
-import { exportUrl, exportZip } from '../exportor';
 
 customElements.define(
   'resolve-button',
@@ -8,10 +7,6 @@ customElements.define(
       super();
 
       this.addEventListener('click', this.resolve);
-
-      this.comicInfo = {
-        url: location.href,
-      };
     }
 
     connectedCallback() {
@@ -24,25 +19,20 @@ customElements.define(
       event.preventDefault();
 
       (async () => {
-        const title = (this.comicInfo.title = document.querySelector('.userwrap h2').innerText);
-        this.comicInfo.startedAt = new Date();
-        this.comicInfo.labels = [...document.querySelectorAll('.asTBcell.uwconn > label')].map(node =>
-          node.innerText.trim()
-        );
-        this.comicInfo.tags = [...document.querySelectorAll('.asTBcell.uwconn .addtags .tagshow')].map(node =>
-          node.innerText.trim()
-        );
-        this.comicInfo.introduction = document.querySelector('.asTBcell.uwconn > p').innerText.substring(3);
+        const title = document.querySelector('.userwrap h2').innerText;
 
         const resolveBox = document.createElement('resolve-box');
 
+        resolveBox.setComicInfo({
+          title,
+          url: location.href,
+          startedAt: new Date(),
+          labels: [...document.querySelectorAll('.asTBcell.uwconn > label')].map(node => node.innerText.trim()),
+          tags: [...document.querySelectorAll('.asTBcell.uwconn .addtags .tagshow')].map(node => node.innerText.trim()),
+          introduction: document.querySelector('.asTBcell.uwconn > p').innerText.substring(3),
+        });
+
         document.body.appendChild(resolveBox);
-        resolveBox.container
-          .querySelector('.btn-export-url')
-          .addEventListener('click', () => exportUrl(this.comicInfo));
-        resolveBox.container
-          .querySelector('.btn-export-zip')
-          .addEventListener('click', () => exportZip(this.comicInfo));
 
         resolveBox.loading = true;
         resolveBox.title = '正在解析';
@@ -51,15 +41,14 @@ customElements.define(
 
         const firstPageUrl = document.querySelector('.gallary_wrap .gallary_item .pic_box a').href;
 
-        this.comicInfo.pages = await resolveAllPage(firstPageUrl, pageInfo => {
-          if (!this.comicInfo.pageTotal) {
-            this.comicInfo.pageTotal = resolveBox.total = pageInfo.total;
-          }
-
+        const pages = await resolveAllPage(firstPageUrl, pageInfo => {
           resolveBox.appendPage(pageInfo);
         });
 
-        this.comicInfo.finishedAt = new Date();
+        resolveBox.setComicInfo({
+          pages,
+          finishedAt: new Date(),
+        });
 
         resolveBox.loading = false;
         resolveBox.title = '解析完毕';

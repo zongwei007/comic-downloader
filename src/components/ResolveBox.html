@@ -78,6 +78,20 @@
     display: flex;
   }
 
+  .progress {
+    height: 15px;
+    overflow: hidden;
+    border: 1px solid #eee;
+  }
+
+  .progress > .progress-bar {
+    float: left;
+    height: 100%;
+    color: #333;
+    text-align: center;
+    background-color: #eee;
+  }
+
   .toolbar {
     height: 60px;
     display: none;
@@ -134,8 +148,7 @@
   </div>
   <div class="toolbar">
     <div class="download-status">
-      下载成功：<span class="status-successed">0</span>/<span class="status-total">0</span> 下载失败:
-      <span class="status-failed">0</span>
+      已下载：<span class="status-successed">0</span> / <span class="status-total">0</span>
     </div>
     <div class="buttons">
       <button class="btn-export-url">导出 URL</button>

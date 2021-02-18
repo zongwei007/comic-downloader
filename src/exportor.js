@@ -8,11 +8,14 @@ const textInfoTemplate = tpl(`
 标签：\${tags.join(' ')}
 简介：\${introduction}
 
+页面地址：
+\${pages.map(page => page.pageUrl).join('\\n')}
+
 图片地址：
 \${pages.map(page => page.imageUrl).join('\\n')}
 
 文件名映射：
-\${pages.map(page => page.fileName + '    ' + page.indexName).join('\\n')}
+\${pages.map(page => page.fileName + ' ' + page.indexName).join('\\n')}
 `);
 
 export async function exportUrl(info) {
@@ -21,33 +24,73 @@ export async function exportUrl(info) {
   saveAs(blob, `${info.title}.info.txt`);
 }
 
-export async function exportZip(info) {
-  const zip = new JSZip();
+export async function exportZip(zip, info, { onProgress, onLoaded, onFail }) {
   const folder = zip.folder(info.title);
 
   for (const page of info.pages) {
-    const buffer = await downloadImage(page.imageUrl, {
-      headers: { Referer: page.pageUrl, 'X-Alt-Referer': page.pageUrl },
-    });
+    if (page.state === 'loaded') {
+      continue;
+    }
 
-    folder.file(page.indexName, buffer);
+    try {
+      const buffer = await downloadImage(page.imageUrl, {
+        onProgress: info => onProgress({ page, ...info }),
+        headers: { Referer: page.pageUrl, 'X-Alt-Referer': page.pageUrl, Cookie: document.cookie },
+      });
+
+      onLoaded({ page, buffer });
+
+      folder.file(page.indexName, buffer);
+    } catch (error) {
+      onFail({ page, error });
+    }
   }
 
-  const blob = await zip.generateAsync({ type: 'blob' });
+  if (info.pages.every(page => page.state === 'loaded')) {
+    const blob = await zip.generateAsync({ type: 'blob' });
 
-  saveAs(blob, `${info.title}.zip`);
+    saveAs(blob, `${info.title}.zip`);
+
+    return true;
+  }
+
+  return false;
 }
 
-function downloadImage(imageUrl, { headers, onprogress }) {
+function downloadImage(imageUrl, { onProgress, ...options }) {
   return new Promise((resolve, reject) => {
+    let lastProgress = 0;
+    let lastTimestamp = new Date().getTime();
+
     GM_xmlhttpRequest({
+      ...options,
       method: 'GET',
       url: imageUrl,
       responseType: 'arraybuffer',
       timeout: 5 * 60 * 1000,
       headers,
-      onprogress,
-      onload: function (res) {
+      onprogress(res) {
+        let speedText = '0 KB/s';
+
+        const now = new Date().getTime();
+        const speedKBs = res.lengthComputable
+          ? Number((res.loaded - lastProgress) / (now - lastTimestamp) / 1.024)
+          : -1;
+
+        if (now - lastTimestamp >= 1000 || lastProgress === 0) {
+          speedText = res.lengthComputable ? `${speedKBs.toFixed(2)} KB/s` : '';
+          lastProgress = res.loaded;
+          lastTimestamp = now;
+        }
+
+        onProgress({
+          loaded: res.loaded,
+          total: res.total,
+          progress: res.lengthComputable ? res.loaded / res.total : '',
+          progressText: speedText,
+        });
+      },
+      onload(res) {
         try {
           // cache them to reduce waiting time and CPU usage on Chrome with Tampermonkey
           // (Tampermonkey uses a dirty way to give res.response, transfer string to arraybuffer every time)
@@ -98,10 +141,10 @@ function downloadImage(imageUrl, { headers, onprogress }) {
           reject(new Error(`[CD] Image ${imageUrl} download fail: Unknown error (Please send feedback)`));
         }
       },
-      onerror: function (res) {
+      onerror(res) {
         reject(new Error(`[CD] Image ${imageUrl} download fail: Network Error`));
       },
-      ontimeout: function (res) {
+      ontimeout(res) {
         reject(new Error(`[CD] Image ${imageUrl} download fail: Timed Out`));
       },
     });
