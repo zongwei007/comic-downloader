@@ -31,3 +31,33 @@ export function formatPageNumber(num, length) {
 
   return name;
 }
+
+export function promisePool(limit) {
+  let running = 0;
+  let pendings = [];
+
+  function call() {
+    while (running < limit) {
+      const runnable = pendings.shift();
+
+      if (!runnable) {
+        break;
+      }
+
+      runnable().finally(() => {
+        running--;
+        call();
+      });
+
+      running++;
+    }
+  }
+
+  return {
+    push(runnable) {
+      pendings.push(runnable);
+
+      call();
+    },
+  };
+}

@@ -1,4 +1,13 @@
-import { parseHTML, formatPageNumber } from './util';
+import { parseHTML, formatPageNumber, promisePool } from './util';
+
+const HOME_PAGE_URL = location.href;
+const DOWNLOAD_THREAD_LIMIT = 5;
+
+const threadPool = promisePool(DOWNLOAD_THREAD_LIMIT);
+
+function resolveIndexPageUrl(index) {
+  return HOME_PAGE_URL.replace('aid', `page-${index}-aid`);
+}
 
 async function requestPage(url, options) {
   const resp = await fetch(url, options);
@@ -6,13 +15,28 @@ async function requestPage(url, options) {
   return await resp.text();
 }
 
-export async function resolvePage(pageUrl) {
+async function resolvePageUrl(indexPageUrl, onChange) {
+  const content = parseHTML(await requestPage(indexPageUrl));
+
+  [...content.querySelectorAll('#bodywrap .gallary_wrap .gallary_item .pic_box a')]
+    .map(link => link.href)
+    .forEach(pageUrl => {
+      threadPool.push(() =>
+        resolvePage(pageUrl).then(page => {
+          onChange(page);
+
+          console.log(`[CD] 解析 ${pageUrl} 完成`);
+        })
+      );
+    });
+}
+
+async function resolvePage(pageUrl) {
   console.log(`[CD] 正在解析 ${pageUrl}`);
 
   const content = parseHTML(await requestPage(pageUrl));
   const imageUrl = content.querySelector('#photo_body #imgarea #picarea').src;
-  const pagination = content.querySelector('.newpagewrap');
-  const pageLabels = pagination.querySelector('.newpagelabel').innerText.split('/');
+  const pageLabels = content.querySelector('.newpagewrap .newpagelabel').innerText.split('/');
   const fileName = /[^/]+(?!.*\/)/.exec(imageUrl)[0];
 
   return {
@@ -23,26 +47,28 @@ export async function resolvePage(pageUrl) {
     indexName: formatPageNumber(pageLabels[0], pageLabels[1].length) + '.' + /[^.]+(?!.*\.)/.exec(fileName),
     state: 'pending',
     total: parseInt(pageLabels[1]),
-    nextPage: pagination.querySelectorAll('.newpage .btntuzao').item(1).href,
   };
 }
 
-export async function resolveAllPage(onChange) {
-  const pages = [];
-  const pageUrls = new Set();
+export function resolveAllPage(onChange) {
+  const paginations = document.querySelectorAll('.bot_toolbar .paginator > a');
+  const lastPage = parseInt(paginations.item(paginations.length - 1).innerText);
 
-  let nextPage = document.querySelector('.gallary_wrap .gallary_item .pic_box a').href;
+  return new Promise((resolve, reject) => {
+    let resolved = 0;
 
-  do {
-    const pageInfo = await resolvePage(nextPage);
+    for (let index = 1; index <= lastPage; index++) {
+      const indexPageUrl = resolveIndexPageUrl(index);
 
-    onChange([pageInfo]);
+      threadPool.push(() =>
+        resolvePageUrl(indexPageUrl, onChange).then(() => {
+          resolved++;
 
-    pages.push(pageInfo);
-    pageUrls.add(pageInfo.pageUrl);
-
-    nextPage = pageInfo.nextPage;
-  } while (!pageUrls.has(nextPage));
-
-  return pages;
+          if (resolved >= lastPage) {
+            resolve();
+          }
+        }, reject)
+      );
+    }
+  });
 }

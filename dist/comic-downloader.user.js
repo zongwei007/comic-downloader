@@ -72,10 +72,65 @@
     return name;
   }
 
+  function promisePool(limit) {
+    let running = 0;
+    let pendings = [];
+
+    function call() {
+      while (running < limit) {
+        const runnable = pendings.shift();
+
+        if (!runnable) {
+          break;
+        }
+
+        runnable().finally(() => {
+          running--;
+          call();
+        });
+
+        running++;
+      }
+    }
+
+    return {
+      push(runnable) {
+        pendings.push(runnable);
+
+        call();
+      },
+    };
+  }
+
+  const HOME_PAGE_URL = location.href;
+  const DOWNLOAD_THREAD_LIMIT = 5;
+
+  const threadPool = promisePool(DOWNLOAD_THREAD_LIMIT);
+
+  function resolveIndexPageUrl(index) {
+    return HOME_PAGE_URL.replace('aid', `page-${index}-aid`);
+  }
+
   async function requestPage(url, options) {
     const resp = await fetch(url, options);
 
     return await resp.text();
+  }
+
+  async function resolvePageUrl(indexPageUrl, onChange) {
+    const content = parseHTML(await requestPage(indexPageUrl));
+
+    [...content.querySelectorAll('#bodywrap .gallary_wrap .gallary_item .pic_box a')]
+      .map(link => link.href)
+      .forEach(pageUrl => {
+        threadPool.push(() =>
+          resolvePage(pageUrl).then(page => {
+            onChange(page);
+
+            console.log(`[CD] 解析 ${pageUrl} 完成`);
+          })
+        );
+      });
   }
 
   async function resolvePage(pageUrl) {
@@ -83,8 +138,7 @@
 
     const content = parseHTML(await requestPage(pageUrl));
     const imageUrl = content.querySelector('#photo_body #imgarea #picarea').src;
-    const pagination = content.querySelector('.newpagewrap');
-    const pageLabels = pagination.querySelector('.newpagelabel').innerText.split('/');
+    const pageLabels = content.querySelector('.newpagewrap .newpagelabel').innerText.split('/');
     const fileName = /[^/]+(?!.*\/)/.exec(imageUrl)[0];
 
     return {
@@ -95,28 +149,30 @@
       indexName: formatPageNumber(pageLabels[0], pageLabels[1].length) + '.' + /[^.]+(?!.*\.)/.exec(fileName),
       state: 'pending',
       total: parseInt(pageLabels[1]),
-      nextPage: pagination.querySelectorAll('.newpage .btntuzao').item(1).href,
     };
   }
 
-  async function resolveAllPage(onChange) {
-    const pages = [];
-    const pageUrls = new Set();
+  function resolveAllPage(onChange) {
+    const paginations = document.querySelectorAll('.bot_toolbar .paginator > a');
+    const lastPage = parseInt(paginations.item(paginations.length - 1).innerText);
 
-    let nextPage = document.querySelector('.gallary_wrap .gallary_item .pic_box a').href;
+    return new Promise((resolve, reject) => {
+      let resolved = 0;
 
-    do {
-      const pageInfo = await resolvePage(nextPage);
+      for (let index = 1; index <= lastPage; index++) {
+        const indexPageUrl = resolveIndexPageUrl(index);
 
-      onChange([pageInfo]);
+        threadPool.push(() =>
+          resolvePageUrl(indexPageUrl, onChange).then(() => {
+            resolved++;
 
-      pages.push(pageInfo);
-      pageUrls.add(pageInfo.pageUrl);
-
-      nextPage = pageInfo.nextPage;
-    } while (!pageUrls.has(nextPage));
-
-    return pages;
+            if (resolved >= lastPage) {
+              resolve();
+            }
+          }, reject)
+        );
+      }
+    });
   }
 
   var commonjsGlobal = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : {};
@@ -280,7 +336,7 @@
     downloaded: '已下载',
   };
 
-  const DOWNLOAD_THREAD_LIMIT = 5;
+  const DOWNLOAD_THREAD_LIMIT$1 = 5;
 
   customElements.define(
     'download-box',
@@ -330,16 +386,25 @@
         console.log(`[CD] 开始解析 ${this.title}`);
 
         try {
-          await resolveAllPage(pageInfo => {
+          await resolveAllPage(page => {
             if (this.stopDownload) {
               throw new Error('stop-download');
             }
 
             if (!this.pages.length) {
-              this.pages = new Array(pageInfo[0].total).fill(null);
+              this.pages = new Array(page.total).fill(null);
+
+              this.container.querySelector('.list').innerHTML = this.pages
+                .map(
+                  (_ele, index) =>
+                    `<resolve-item id="resolve-image-${index + 1}">
+                     <span slot="index">${index + 1}</span>
+                   </resolve-item>`
+                )
+                .join('');
             }
 
-            this.pushPage(...pageInfo);
+            this.pushPage(page);
           });
 
           this.finishedAt = new Date();
@@ -354,16 +419,10 @@
         }
       }
 
-      pushPage(...pageInfo) {
-        if (!pageInfo.length) {
-          return;
-        }
+      pushPage(page) {
+        const pageItem = this.updatePage(page);
 
-        const container = this.container.querySelector('.list');
-
-        pageInfo.forEach(page => this.updatePage(page));
-
-        container.scrollTo({ top: container.scrollHeight });
+        pageItem.scrollIntoView();
 
         this.pushDownloading();
       }
@@ -371,9 +430,9 @@
       updatePage({ progress = 0, progressText = '', ...page }) {
         this.pages[page.index - 1] = page;
 
-        const container = this.container.querySelector('.list');
-        const ele = container.querySelector(`#resolve-image-${page.index}`);
-        const html = `
+        const ele = this.container.querySelector(`#resolve-image-${page.index}`);
+
+        ele.innerHTML = `
         <span slot="index">${page.index}</span>
         <span slot="url">${
           page.state === 'downloading' ? progressTemplate({ progress: progress * 100, progressText }) : page.pageUrl
@@ -381,21 +440,11 @@
         <span slot="state">${STATE_MAP[page.state]}</span>
       `;
 
-        if (ele) {
-          ele.innerHTML = html;
-        } else {
-          container.insertAdjacentHTML(
-            'beforeend',
-            `<resolve-item id="resolve-image-${page.index}">
-            ${html}
-           </resolve-item>
-          `
-          );
-        }
+        return ele;
       }
 
       pushDownloading() {
-        while (this.downloadingCount < DOWNLOAD_THREAD_LIMIT) {
+        while (this.downloadingCount < DOWNLOAD_THREAD_LIMIT$1) {
           const page = this.pages.find(ele => ele?.state === 'pending');
 
           if (!page) {
@@ -515,7 +564,7 @@
     }
   );
 
-  var itemRoot = "<style>\n  :host > div {\n    padding: 5px;\n    flex: 1;\n  }\n\n  :host > div.index {\n    width: 40px;\n    text-align: right;\n    flex: 0 1 auto;\n  }\n\n  :host > div.state {\n    width: 60px;\n    flex: 0 1 auto;\n  }\n</style>\n<div class=\"index\"><slot name=\"index\">1</slot></div>\n<div><slot name=\"url\">url</slot></div>\n<div class=\"state\"><slot name=\"state\">pending</slot></div>\n";
+  var itemRoot = "<style>\n  :host > div {\n    padding: 5px;\n    flex: 1;\n  }\n\n  :host > div.index {\n    width: 40px;\n    text-align: right;\n    flex: 0 1 auto;\n  }\n\n  :host > div.state {\n    width: 60px;\n    flex: 0 1 auto;\n  }\n</style>\n<div class=\"index\"><slot name=\"index\">1</slot></div>\n<div><slot name=\"url\"></slot></div>\n<div class=\"state\"><slot name=\"state\"></slot></div>\n";
 
   customElements.define(
     'resolve-item',

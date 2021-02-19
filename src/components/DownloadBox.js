@@ -67,16 +67,25 @@ customElements.define(
       console.log(`[CD] 开始解析 ${this.title}`);
 
       try {
-        await resolveAllPage(pageInfo => {
+        await resolveAllPage(page => {
           if (this.stopDownload) {
             throw new Error('stop-download');
           }
 
           if (!this.pages.length) {
-            this.pages = new Array(pageInfo[0].total).fill(null);
+            this.pages = new Array(page.total).fill(null);
+
+            this.container.querySelector('.list').innerHTML = this.pages
+              .map(
+                (_ele, index) =>
+                  `<resolve-item id="resolve-image-${index + 1}">
+                     <span slot="index">${index + 1}</span>
+                   </resolve-item>`
+              )
+              .join('');
           }
 
-          this.pushPage(...pageInfo);
+          this.pushPage(page);
         });
 
         this.finishedAt = new Date();
@@ -91,16 +100,10 @@ customElements.define(
       }
     }
 
-    pushPage(...pageInfo) {
-      if (!pageInfo.length) {
-        return;
-      }
+    pushPage(page) {
+      const pageItem = this.updatePage(page);
 
-      const container = this.container.querySelector('.list');
-
-      pageInfo.forEach(page => this.updatePage(page));
-
-      container.scrollTo({ top: container.scrollHeight });
+      pageItem.scrollIntoView();
 
       this.pushDownloading();
     }
@@ -108,9 +111,9 @@ customElements.define(
     updatePage({ progress = 0, progressText = '', ...page }) {
       this.pages[page.index - 1] = page;
 
-      const container = this.container.querySelector('.list');
-      const ele = container.querySelector(`#resolve-image-${page.index}`);
-      const html = `
+      const ele = this.container.querySelector(`#resolve-image-${page.index}`);
+
+      ele.innerHTML = `
         <span slot="index">${page.index}</span>
         <span slot="url">${
           page.state === 'downloading' ? progressTemplate({ progress: progress * 100, progressText }) : page.pageUrl
@@ -118,17 +121,7 @@ customElements.define(
         <span slot="state">${STATE_MAP[page.state]}</span>
       `;
 
-      if (ele) {
-        ele.innerHTML = html;
-      } else {
-        container.insertAdjacentHTML(
-          'beforeend',
-          `<resolve-item id="resolve-image-${page.index}">
-            ${html}
-           </resolve-item>
-          `
-        );
-      }
+      return ele;
     }
 
     pushDownloading() {
