@@ -9,10 +9,9 @@ async function requestPage(url, options) {
 export async function resolvePage(pageUrl) {
   console.log(`[CD] 正在解析 ${pageUrl}`);
 
-  const content = await requestPage(pageUrl);
-  const doms = [...parseHTML(content)];
-  const imageUrl = doms.find(ele => ele.id === 'photo_body').querySelector('#imgarea #picarea').src;
-  const pagination = doms.find(ele => ele.className === 'newpagewrap');
+  const content = parseHTML(await requestPage(pageUrl));
+  const imageUrl = content.querySelector('#photo_body #imgarea #picarea').src;
+  const pagination = content.querySelector('.newpagewrap');
   const pageLabels = pagination.querySelector('.newpagelabel').innerText.split('/');
   const fileName = /[^/]+(?!.*\/)/.exec(imageUrl)[0];
 
@@ -28,14 +27,16 @@ export async function resolvePage(pageUrl) {
   };
 }
 
-export async function resolveAllPage(nextPage, onChange) {
+export async function resolveAllPage(onChange) {
   const pages = [];
   const pageUrls = new Set();
+
+  let nextPage = document.querySelector('.gallary_wrap .gallary_item .pic_box a').href;
 
   do {
     const pageInfo = await resolvePage(nextPage);
 
-    onChange(pageInfo);
+    onChange([pageInfo]);
 
     pages.push(pageInfo);
     pageUrls.add(pageInfo.pageUrl);

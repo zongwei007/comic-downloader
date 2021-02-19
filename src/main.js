@@ -1,7 +1,7 @@
-import './components/ResolveButton';
-import './components/ResolveBox';
-import './components/ResolveItem';
+import './components/DownloadButton';
+import './components/DownloadBox';
+import './components/PageItem';
 
 const panel = document.querySelector('.asTBcell.uwthumb');
 
-panel.appendChild(document.createElement('a', { is: 'resolve-button' }));
+panel.appendChild(document.createElement('a', { is: 'download-button' }));

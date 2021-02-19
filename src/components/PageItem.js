@@ -1,4 +1,4 @@
-import itemRoot from './ResolveItem.html';
+import itemRoot from './PageItem.html';
 
 customElements.define(
   'resolve-item',

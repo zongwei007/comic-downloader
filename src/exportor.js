@@ -24,40 +24,24 @@ export async function exportUrl(info) {
   saveAs(blob, `${info.title}.info.txt`);
 }
 
-export async function exportZip(zip, info, { onProgress, onLoaded, onFail }) {
+export async function exportZip(info) {
+  const zip = new JSZip();
   const folder = zip.folder(info.title);
 
   for (const page of info.pages) {
-    if (page.state === 'loaded') {
-      continue;
-    }
-
-    try {
-      const buffer = await downloadImage(page.imageUrl, {
-        onProgress: info => onProgress({ page, ...info }),
-        headers: { Referer: page.pageUrl, 'X-Alt-Referer': page.pageUrl, Cookie: document.cookie },
-      });
-
-      onLoaded({ page, buffer });
-
-      folder.file(page.indexName, buffer);
-    } catch (error) {
-      onFail({ page, error });
+    if (page.buffer) {
+      folder.file(page.indexName, page.buffer);
     }
   }
 
-  if (info.pages.every(page => page.state === 'loaded')) {
-    const blob = await zip.generateAsync({ type: 'blob' });
+  folder.file('info.txt', new Blob([textInfoTemplate(info)], { type: 'text/plain;charset=utf-8' }));
 
-    saveAs(blob, `${info.title}.zip`);
+  const blob = await zip.generateAsync({ type: 'blob' });
 
-    return true;
-  }
-
-  return false;
+  saveAs(blob, `${info.title}.zip`);
 }
 
-function downloadImage(imageUrl, { onProgress, ...options }) {
+export function downloadImage(imageUrl, { onProgress, ...options }) {
   return new Promise((resolve, reject) => {
     let lastProgress = 0;
     let lastTimestamp = new Date().getTime();
@@ -68,7 +52,6 @@ function downloadImage(imageUrl, { onProgress, ...options }) {
       url: imageUrl,
       responseType: 'arraybuffer',
       timeout: 5 * 60 * 1000,
-      headers,
       onprogress(res) {
         let speedText = '0 KB/s';
 

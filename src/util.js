@@ -9,7 +9,7 @@ export function parseHTML(html) {
 
   context.body.innerHTML = html;
 
-  return [...context.body.children];
+  return context.body;
 }
 
 export function tpl(template) {
