@@ -1,21 +1,4 @@
-import fs from 'fs';
-
-import { string } from 'rollup-plugin-string';
-import resolve from '@rollup/plugin-node-resolve';
-import commonjs from '@rollup/plugin-commonjs';
-
-export default {
-  input: 'src/main.js',
-  plugins: [string({ include: '**/*.html' }), resolve(), commonjs(), outputMeta()],
-  output: {
-    file: 'dist/comic-downloader.user.js',
-    format: 'iife',
-    globals: ['GM_xmlhttpRequest', 'JSZip', 'Vue'],
-  },
-};
-
-function outputMeta() {
-  const meta = `// ==UserScript==
+// ==UserScript==
 // @name         批量打包下载漫画
 // @author       zongwei007
 // @namespace    https://github.com/zongwei007/
@@ -32,14 +15,3 @@ function outputMeta() {
 // @connect      wnacg.xyz
 // @connect      wnacg.download
 // ==/UserScript==
-`;
-
-  return {
-    name: 'output-banner-as-meta',
-    banner() {
-      fs.writeFileSync('./dist/comic-downloader.meta.js', meta);
-
-      return meta;
-    },
-  };
-}

@@ -10,7 +10,7 @@ customElements.define(
     connectedCallback() {
       this.className = 'btn';
       this.style = 'width: 130px';
-      this.innerText = '解析图片地址';
+      this.innerText = '打包下载漫画';
     }
 
     download(event) {
@@ -21,10 +21,7 @@ customElements.define(
         box.remove();
       }
 
-      document.body.insertAdjacentHTML(
-        'beforeend',
-        `<download-box id="download-box"></download-box>`
-      );
+      document.body.insertAdjacentHTML('beforeend', `<download-box id="download-box"></download-box>`);
     }
   },
   { extends: 'a' }
