@@ -17,18 +17,29 @@ async function requestPage(url, options) {
 
 async function resolvePageUrl(indexPageUrl, onChange) {
   const content = parseHTML(await requestPage(indexPageUrl));
+  const links = [...content.querySelectorAll('#bodywrap .gallary_wrap .gallary_item .pic_box a')].map(
+    link => link.href
+  );
 
-  [...content.querySelectorAll('#bodywrap .gallary_wrap .gallary_item .pic_box a')]
-    .map(link => link.href)
-    .forEach(pageUrl => {
+  return new Promise((resolve, reject) => {
+    const pages = [];
+
+    for (const pageUrl of links) {
       threadPool.push(() =>
         resolvePage(pageUrl).then(page => {
+          pages.push(page);
+
           onChange(page);
 
           console.log(`[CD] 解析 ${pageUrl} 完成`);
-        })
+
+          if (pages.length === links.length) {
+            resolve(pages);
+          }
+        }, reject)
       );
-    });
+    }
+  });
 }
 
 async function resolvePage(pageUrl) {
@@ -56,16 +67,16 @@ export function resolveAllPage(onChange) {
 
   return new Promise((resolve, reject) => {
     let resolved = 0;
+    const allPages = [];
 
     for (let index = 1; index <= lastPage; index++) {
-      const indexPageUrl = resolveIndexPageUrl(index);
-
       threadPool.push(() =>
-        resolvePageUrl(indexPageUrl, onChange).then(() => {
+        resolvePageUrl(resolveIndexPageUrl(index), onChange).then(pages => {
           resolved++;
+          allPages.push(...pages);
 
           if (resolved >= lastPage) {
-            resolve();
+            resolve(allPages);
           }
         }, reject)
       );

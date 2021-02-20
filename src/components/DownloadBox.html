@@ -78,8 +78,28 @@
     display: flex;
   }
 
+  .row.header {
+    font-weight: bolder;
+  }
+
+  .row > div {
+    padding: 5px;
+    flex: 1;
+  }
+
+  .row > div.index {
+    width: 40px;
+    text-align: right;
+    flex: 0 1 auto;
+  }
+
+  .row > div.state {
+    width: 60px;
+    flex: 0 1 auto;
+  }
+
   .progress {
-    height: 15px;
+    height: 14px;
     overflow: hidden;
     border: 1px solid #eee;
   }
@@ -106,10 +126,6 @@
     text-align: right;
   }
 
-  .status-successed {
-    color: #126612;
-  }
-
   .status-failed {
     color: #b60202;
   }
@@ -131,26 +147,38 @@
     display: flex;
   }
 </style>
-<div class="container">
+
+<div class="container" v-bind:class="{ fold, loading, resolved }">
   <h4>
-    <span class="title"> 总页数：0 | 正在下载：0 | 已下载：0 | 失败：0 </span>
+    <span class="title">
+      总页数：{{ pages.length }} | 正在下载：{{ downloadingCount }} | 已下载：{{ successCount }} | 失败：{{ failCount }}
+    </span>
     <span class="spinner"></span>
-    <a class="btn-close">╳</a>
-    <a class="btn-folder"></a>
+    <a class="btn-close" v-on:click="close">╳</a>
+    <a class="btn-folder" v-on:click="toggleFold"></a>
   </h4>
   <hr />
   <div class="list">
-    <resolve-item class="header">
-      <span slot="index">序号</span>
-      <span slot="url">页面</span>
-      <span slot="state">状态</span>
-    </resolve-item>
+    <page-item class="header">
+      <template v-slot:index>序号</template>
+      <template v-slot:url>页面</template>
+      <template v-slot:state>状态</template>
+    </page-item>
+    <page-item
+      v-for="page in currentPages"
+      :key="page.index"
+      :state="page.state"
+      :index="page.index"
+      :url="page.pageUrl"
+      :progress="page.progress"
+      :progress-text="page.progressText"
+    />
   </div>
   <div class="toolbar">
     <div class="download-status"></div>
     <div class="buttons">
-      <button class="btn-export-url">导出 URL</button>
-      <button class="btn-export-zip">导出 ZIP</button>
+      <button class="btn-export-url" v-on:click="exportPage('txt')">导出 URL</button>
+      <button class="btn-export-zip" v-on:click="exportPage('zip')">导出 ZIP</button>
     </div>
   </div>
 </div>

@@ -69,7 +69,7 @@ export function downloadImage(imageUrl, { onProgress, ...options }) {
         onProgress({
           loaded: res.loaded,
           total: res.total,
-          progress: res.lengthComputable ? res.loaded / res.total : '',
+          progress: res.lengthComputable ? res.loaded / res.total : 0,
           progressText: speedText,
         });
       },

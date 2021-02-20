@@ -1,6 +1,5 @@
-import './components/DownloadButton';
 import './components/DownloadBox';
-import './components/PageItem';
+import './components/DownloadButton';
 
 const panel = document.querySelector('.asTBcell.uwthumb');
 

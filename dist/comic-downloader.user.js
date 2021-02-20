@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         批量打包下载漫画
 // @namespace    http://tampermonkey.net/
-// @version      1.1.0
+// @version      1.2.0
 // @description  解析漫画网站图片地址，下载图片并打包为 zip 文件，或导出为文本
 // @match        www.wnacg.org/*
 // @grant        GM_xmlhttpRequest
+// @require      https://cdn.jsdelivr.net/npm/vue@2.6.12/dist/vue.min.js#sha256-KSlsysqp7TXtFo/FHjb1T9b425x3hrvzjMWaJyKbpcI=
 // @require      https://cdn.jsdelivr.net/npm/jszip@3.6.0/dist/jszip.min.js#sha256-MB+WKZmHMme2BRVKpDuIbfs6VlSdUIAY1VroUmE+p8g=
 // @downloadURL  https://github.com/zongwei007/comic-downloader/raw/master/dist/comic-downloader.user.js
 // @connect      wnacg.org
@@ -15,34 +16,48 @@
 (function () {
   'use strict';
 
-  customElements.define(
-    'download-button',
-    class extends HTMLAnchorElement {
-      constructor() {
-        super();
+  const STATE_MAP = {
+    error: '下载失败',
+    pending: '准备下载',
+    downloading: '下载中',
+    downloaded: '已下载',
+  };
 
-        this.addEventListener('click', this.download);
-      }
+  var PageItem = {
+    props: ['class', 'index', 'url', 'progress', 'progressText', 'state'],
 
-      connectedCallback() {
-        this.className = 'btn';
-        this.style = 'width: 130px';
-        this.innerText = '解析图片地址';
-      }
-
-      download(event) {
-        event.preventDefault();
-        const box = document.getElementById('download-box');
-
-        if (box && confirm('正在下载中，是否重新下载？')) {
-          box.remove();
-        }
-
-        document.body.insertAdjacentHTML('beforeend', `<download-box id="download-box"></download-box>`);
-      }
+    computed: {
+      hasError() {
+        return this.state === 'error';
+      },
+      isDownloading() {
+        return this.state === 'downloading';
+      },
+      progressWidth() {
+        return `${(this.progress || 0) * 100}%`;
+      },
+      stateText() {
+        return STATE_MAP[this.state];
+      },
     },
-    { extends: 'a' }
-  );
+
+    template: `
+    <div class="row" v-bind:class="{ downloading: isDownloading }">
+      <div class="index"><slot name="index">{{ index }}</slot></div>
+      <div>
+        <slot name="url">
+          <div v-if="isDownloading" class="progress">
+            <div class="progress-bar" v-bind:style="{ width: progressWidth }">{{ progressText }}</div>
+          </div>
+          <template v-else>
+            {{ url }}
+          </template>
+        </slot>
+      </div>
+      <div class="state" v-bind:class="{ 'status-failed': hasError }"><slot name="state">{{ stateText }}</slot></div>
+    </div>
+  `,
+  };
 
   function parseHTML(html) {
     const context = document.implementation.createHTMLDocument();
@@ -119,18 +134,29 @@
 
   async function resolvePageUrl(indexPageUrl, onChange) {
     const content = parseHTML(await requestPage(indexPageUrl));
+    const links = [...content.querySelectorAll('#bodywrap .gallary_wrap .gallary_item .pic_box a')].map(
+      link => link.href
+    );
 
-    [...content.querySelectorAll('#bodywrap .gallary_wrap .gallary_item .pic_box a')]
-      .map(link => link.href)
-      .forEach(pageUrl => {
+    return new Promise((resolve, reject) => {
+      const pages = [];
+
+      for (const pageUrl of links) {
         threadPool.push(() =>
           resolvePage(pageUrl).then(page => {
+            pages.push(page);
+
             onChange(page);
 
             console.log(`[CD] 解析 ${pageUrl} 完成`);
-          })
+
+            if (pages.length === links.length) {
+              resolve(pages);
+            }
+          }, reject)
         );
-      });
+      }
+    });
   }
 
   async function resolvePage(pageUrl) {
@@ -158,16 +184,16 @@
 
     return new Promise((resolve, reject) => {
       let resolved = 0;
+      const allPages = [];
 
       for (let index = 1; index <= lastPage; index++) {
-        const indexPageUrl = resolveIndexPageUrl(index);
-
         threadPool.push(() =>
-          resolvePageUrl(indexPageUrl, onChange).then(() => {
+          resolvePageUrl(resolveIndexPageUrl(index), onChange).then(pages => {
             resolved++;
+            allPages.push(...pages);
 
             if (resolved >= lastPage) {
-              resolve();
+              resolve(allPages);
             }
           }, reject)
         );
@@ -256,7 +282,7 @@
           onProgress({
             loaded: res.loaded,
             total: res.total,
-            progress: res.lengthComputable ? res.loaded / res.total : '',
+            progress: res.lengthComputable ? res.loaded / res.total : 0,
             progressText: speedText,
           });
         },
@@ -321,22 +347,163 @@
     });
   }
 
-  var boxRoot = "<style>\n  .container {\n    position: fixed;\n    right: 0;\n    bottom: 0;\n    width: 33%;\n    height: 30%;\n    padding: 0.5rem;\n    background: #666;\n    border-top-right-radius: 5px;\n    border-top-left-radius: 5px;\n    border: 1px solid #333;\n    opacity: 98%;\n    color: #eee;\n  }\n\n  .container h4 {\n    margin: 0;\n  }\n\n  .btn-close,\n  .btn-folder {\n    float: right;\n    cursor: pointer;\n    padding: 0 5px;\n  }\n\n  .btn-folder::after {\n    display: inline;\n    content: '▼';\n  }\n\n  .spinner {\n    display: none;\n  }\n\n  .spinner::after {\n    content: '';\n    display: inline;\n    animation: loading-spinner;\n    animation-duration: 5s;\n    animation-iteration-count: infinite;\n  }\n\n  @keyframes loading-spinner {\n    20% {\n      content: '.';\n    }\n\n    40% {\n      content: '..';\n    }\n\n    60% {\n      content: '...';\n    }\n\n    80% {\n      content: '....';\n    }\n\n    100% {\n      content: '.....';\n    }\n  }\n\n  .loading .spinner {\n    display: inline;\n  }\n\n  .list {\n    width: 100%;\n    max-height: calc(100% - 60px);\n    overflow: auto;\n  }\n\n  .list .row {\n    display: flex;\n  }\n\n  .progress {\n    height: 15px;\n    overflow: hidden;\n    border: 1px solid #eee;\n  }\n\n  .progress > .progress-bar {\n    float: left;\n    height: 100%;\n    color: #333;\n    text-align: center;\n    background-color: #eee;\n  }\n\n  .toolbar {\n    height: 60px;\n    display: none;\n    padding-top: 10px;\n  }\n\n  .toolbar > div {\n    flex: 1;\n  }\n\n  .toolbar > .buttons {\n    text-align: right;\n  }\n\n  .status-successed {\n    color: #126612;\n  }\n\n  .status-failed {\n    color: #b60202;\n  }\n\n  .fold .btn-folder::after {\n    content: '▲';\n  }\n\n  .fold.container {\n    height: 15px;\n  }\n\n  .fold .list,\n  .fold .toolbar {\n    display: none;\n  }\n\n  .resolved .toolbar {\n    display: flex;\n  }\n</style>\n<div class=\"container\">\n  <h4>\n    <span class=\"title\"> 总页数：0 | 正在下载：0 | 已下载：0 | 失败：0 </span>\n    <span class=\"spinner\"></span>\n    <a class=\"btn-close\">╳</a>\n    <a class=\"btn-folder\"></a>\n  </h4>\n  <hr />\n  <div class=\"list\">\n    <resolve-item class=\"header\">\n      <span slot=\"index\">序号</span>\n      <span slot=\"url\">页面</span>\n      <span slot=\"state\">状态</span>\n    </resolve-item>\n  </div>\n  <div class=\"toolbar\">\n    <div class=\"download-status\"></div>\n    <div class=\"buttons\">\n      <button class=\"btn-export-url\">导出 URL</button>\n      <button class=\"btn-export-zip\">导出 ZIP</button>\n    </div>\n  </div>\n</div>\n";
-
-  const progressTemplate = tpl(`
-<div class="progress">
-  <div class="progress-bar" style="width:\${progress}%">\${progressText}</div>
-</div>
-`);
-
-  const STATE_MAP = {
-    error: '下载失败',
-    pending: '准备下载',
-    downloading: '下载中',
-    downloaded: '已下载',
-  };
+  var html = "<style>\n  .container {\n    position: fixed;\n    right: 0;\n    bottom: 0;\n    width: 33%;\n    height: 30%;\n    padding: 0.5rem;\n    background: #666;\n    border-top-right-radius: 5px;\n    border-top-left-radius: 5px;\n    border: 1px solid #333;\n    opacity: 98%;\n    color: #eee;\n  }\n\n  .container h4 {\n    margin: 0;\n  }\n\n  .btn-close,\n  .btn-folder {\n    float: right;\n    cursor: pointer;\n    padding: 0 5px;\n  }\n\n  .btn-folder::after {\n    display: inline;\n    content: '▼';\n  }\n\n  .spinner {\n    display: none;\n  }\n\n  .spinner::after {\n    content: '';\n    display: inline;\n    animation: loading-spinner;\n    animation-duration: 5s;\n    animation-iteration-count: infinite;\n  }\n\n  @keyframes loading-spinner {\n    20% {\n      content: '.';\n    }\n\n    40% {\n      content: '..';\n    }\n\n    60% {\n      content: '...';\n    }\n\n    80% {\n      content: '....';\n    }\n\n    100% {\n      content: '.....';\n    }\n  }\n\n  .loading .spinner {\n    display: inline;\n  }\n\n  .list {\n    width: 100%;\n    max-height: calc(100% - 60px);\n    overflow: auto;\n  }\n\n  .list .row {\n    display: flex;\n  }\n\n  .row.header {\n    font-weight: bolder;\n  }\n\n  .row > div {\n    padding: 5px;\n    flex: 1;\n  }\n\n  .row > div.index {\n    width: 40px;\n    text-align: right;\n    flex: 0 1 auto;\n  }\n\n  .row > div.state {\n    width: 60px;\n    flex: 0 1 auto;\n  }\n\n  .progress {\n    height: 14px;\n    overflow: hidden;\n    border: 1px solid #eee;\n  }\n\n  .progress > .progress-bar {\n    float: left;\n    height: 100%;\n    color: #333;\n    text-align: center;\n    background-color: #eee;\n  }\n\n  .toolbar {\n    height: 60px;\n    display: none;\n    padding-top: 10px;\n  }\n\n  .toolbar > div {\n    flex: 1;\n  }\n\n  .toolbar > .buttons {\n    text-align: right;\n  }\n\n  .status-failed {\n    color: #b60202;\n  }\n\n  .fold .btn-folder::after {\n    content: '▲';\n  }\n\n  .fold.container {\n    height: 15px;\n  }\n\n  .fold .list,\n  .fold .toolbar {\n    display: none;\n  }\n\n  .resolved .toolbar {\n    display: flex;\n  }\n</style>\n\n<div class=\"container\" v-bind:class=\"{ fold, loading, resolved }\">\n  <h4>\n    <span class=\"title\">\n      总页数：{{ pages.length }} | 正在下载：{{ downloadingCount }} | 已下载：{{ successCount }} | 失败：{{ failCount }}\n    </span>\n    <span class=\"spinner\"></span>\n    <a class=\"btn-close\" v-on:click=\"close\">╳</a>\n    <a class=\"btn-folder\" v-on:click=\"toggleFold\"></a>\n  </h4>\n  <hr />\n  <div class=\"list\">\n    <page-item class=\"header\">\n      <template v-slot:index>序号</template>\n      <template v-slot:url>页面</template>\n      <template v-slot:state>状态</template>\n    </page-item>\n    <page-item\n      v-for=\"page in currentPages\"\n      :key=\"page.index\"\n      :state=\"page.state\"\n      :index=\"page.index\"\n      :url=\"page.pageUrl\"\n      :progress=\"page.progress\"\n      :progress-text=\"page.progressText\"\n    />\n  </div>\n  <div class=\"toolbar\">\n    <div class=\"download-status\"></div>\n    <div class=\"buttons\">\n      <button class=\"btn-export-url\" v-on:click=\"exportPage('txt')\">导出 URL</button>\n      <button class=\"btn-export-zip\" v-on:click=\"exportPage('zip')\">导出 ZIP</button>\n    </div>\n  </div>\n</div>\n";
 
   const DOWNLOAD_THREAD_LIMIT$1 = 5;
+
+  function DownloadBox(el) {
+    let canceled = false;
+
+    const threadPool = promisePool(DOWNLOAD_THREAD_LIMIT$1);
+
+    const comicInfo = {
+      finishedAt: null,
+      introduction: document.querySelector('.asTBcell.uwconn > p').innerText.substring(3),
+      labels: [...document.querySelectorAll('.asTBcell.uwconn > label')].map(node => node.innerText.trim()),
+      startedAt: new Date(),
+      tags: [...document.querySelectorAll('.asTBcell.uwconn .addtags .tagshow')].map(node => node.innerText.trim()),
+      title: document.querySelector('.userwrap h2').innerText,
+      url: location.href,
+    };
+
+    return new Vue({
+      el,
+      data: {
+        downloadingCount: 0,
+        fold: false,
+        failCount: 0,
+        loading: false,
+        pages: [],
+        resolved: false,
+        successCount: 0,
+      },
+
+      components: {
+        'page-item': PageItem,
+      },
+
+      created() {
+        this.startDownload();
+      },
+
+      beforeDestroy() {
+        canceled = true;
+      },
+
+      computed: {
+        currentPages() {
+          return this.pages.filter(Boolean);
+        },
+      },
+
+      methods: {
+        async startDownload() {
+          this.loading = true;
+
+          console.log(`[CD] 开始解析 ${comicInfo.title}`);
+
+          try {
+            await resolveAllPage(page => {
+              if (canceled) {
+                throw new Error('stop-download');
+              }
+
+              if (!this.pages.length) {
+                this.pages = new Array(page.total).fill(null);
+              }
+
+              this.updatePage(page);
+
+              this.pushDownloading(page);
+            });
+
+            comicInfo.finishedAt = new Date();
+
+            this.loading = false;
+            this.resolved = true;
+
+            console.log(`[CD] 解析 ${comicInfo.title} 完毕`);
+          } catch (e) {
+            if (e.message !== 'stop-download') {
+              console.error(e);
+            }
+          }
+        },
+
+        updatePage(page) {
+          this.pages.splice(page.index - 1, 1, page);
+
+          if (page.state === 'downloading') {
+            this.$nextTick(() => {
+              const loadingPage = this.$el.querySelector('.row.downloading');
+
+              if (loadingPage) {
+                loadingPage.scrollIntoView();
+              }
+            });
+          }
+        },
+
+        pushDownloading(page) {
+          threadPool.push(async () => {
+            if (page.state === 'error') {
+              this.failCount--;
+            }
+
+            this.updatePage({ ...page, state: 'downloading' });
+
+            this.downloadingCount++;
+
+            try {
+              const buffer = await downloadImage(page.imageUrl, {
+                onProgress: info => this.updatePage({ ...page, ...info, state: 'downloading' }),
+                headers: { Referer: page.pageUrl, 'X-Alt-Referer': page.pageUrl, Cookie: document.cookie },
+              });
+
+              this.updatePage({ ...page, buffer, state: 'downloaded' });
+              this.successCount++;
+
+              if (this.successCount === this.pages.length && this.pages.every(ele => ele.buffer)) {
+                this.finishedAt = new Date();
+                this.exportPage('zip');
+              }
+            } catch (error) {
+              this.failCount++;
+              this.updatePage({ ...page, error, state: 'error' });
+            } finally {
+              this.downloadingCount--;
+
+              if (
+                this.successCount + this.failCount >= this.pages.length &&
+                this.failCount > 0 &&
+                confirm('下载未全部完成，是否重试？')
+              ) {
+                this.pages.filter(page => page.state === 'error').forEach(page => this.pushDownloading(page));
+              }
+            }
+          });
+        },
+
+        exportPage(type) {
+          const info = { ...comicInfo, pages: this.pages };
+
+          if (type === 'zip') {
+            exportZip(info);
+          } else if (type === 'txt') {
+            exportUrl(info);
+          }
+        },
+
+        close() {
+          document.getElementById('download-box-container').remove();
+        },
+
+        toggleFold() {
+          this.fold = !this.fold;
+        },
+      },
+    });
+  }
 
   customElements.define(
     'download-box',
@@ -345,238 +512,49 @@
         super();
 
         this.attachShadow({ mode: 'open' });
-        this.shadowRoot.innerHTML = boxRoot;
-
-        this.stopDownload = false;
-        this.startedAt = new Date();
-        this.finishedAt = null;
-        this._pages = [];
-        this._downloadingCount = 0;
-        this._successCount = 0;
-        this._failCount = 0;
-        this.title = document.querySelector('.userwrap h2').innerText;
-
-        this._pageInfo = {
-          url: location.href,
-          labels: [...document.querySelectorAll('.asTBcell.uwconn > label')].map(node => node.innerText.trim()),
-          tags: [...document.querySelectorAll('.asTBcell.uwconn .addtags .tagshow')].map(node => node.innerText.trim()),
-          introduction: document.querySelector('.asTBcell.uwconn > p').innerText.substring(3),
-        };
+        this.shadowRoot.innerHTML = html;
       }
 
       connectedCallback() {
-        this.container = this.shadowRoot.querySelector('.container');
-        this.container.querySelector('.btn-close').addEventListener('click', () => this.remove());
-        this.container
-          .querySelector('.btn-folder')
-          .addEventListener('click', () => this.container.classList.toggle('fold'));
-        this.container.querySelector('.btn-export-url').addEventListener('click', () => this.exportPage('txt'));
-        this.container.querySelector('.btn-export-zip').addEventListener('click', () => this.exportPage('zip'));
-
-        this.startDownload();
+        this.vm = DownloadBox(this.shadowRoot.querySelector('.container'));
       }
 
       disconnectedCallback() {
-        this.stopDownload = true;
-      }
-
-      async startDownload() {
-        this.loading = true;
-
-        console.log(`[CD] 开始解析 ${this.title}`);
-
-        try {
-          await resolveAllPage(page => {
-            if (this.stopDownload) {
-              throw new Error('stop-download');
-            }
-
-            if (!this.pages.length) {
-              this.pages = new Array(page.total).fill(null);
-
-              this.container.querySelector('.list').innerHTML = this.pages
-                .map(
-                  (_ele, index) =>
-                    `<resolve-item id="resolve-image-${index + 1}">
-                     <span slot="index">${index + 1}</span>
-                   </resolve-item>`
-                )
-                .join('');
-            }
-
-            this.pushPage(page);
-          });
-
-          this.finishedAt = new Date();
-          this.loading = false;
-          this.resolved = true;
-
-          console.log(`[CD] 解析 ${this.title} 完毕`);
-        } catch (e) {
-          if (e.message !== 'stop-download') {
-            console.error(e);
-          }
-        }
-      }
-
-      pushPage(page) {
-        const pageItem = this.updatePage(page);
-
-        pageItem.scrollIntoView();
-
-        this.pushDownloading();
-      }
-
-      updatePage({ progress = 0, progressText = '', ...page }) {
-        this.pages[page.index - 1] = page;
-
-        const ele = this.container.querySelector(`#resolve-image-${page.index}`);
-
-        ele.innerHTML = `
-        <span slot="index">${page.index}</span>
-        <span slot="url">${
-          page.state === 'downloading' ? progressTemplate({ progress: progress * 100, progressText }) : page.pageUrl
-        }</span>
-        <span slot="state">${STATE_MAP[page.state]}</span>
-      `;
-
-        return ele;
-      }
-
-      pushDownloading() {
-        while (this.downloadingCount < DOWNLOAD_THREAD_LIMIT$1) {
-          const page = this.pages.find(ele => ele?.state === 'pending');
-
-          if (!page) {
-            break;
-          }
-
-          if (page.state === 'error') {
-            this.failCount--;
-          }
-
-          this.updatePage({ ...page, state: 'downloading' });
-
-          downloadImage(page.imageUrl, {
-            onProgress: info => this.updatePage({ ...page, ...info, state: 'downloading' }),
-            headers: { Referer: page.pageUrl, 'X-Alt-Referer': page.pageUrl, Cookie: document.cookie },
-          })
-            .then(buffer => {
-              this.successCount++;
-              this.updatePage({ ...page, buffer, state: 'downloaded' });
-
-              if (this.successCount === this.pages.length && this.pages.every(ele => ele.buffer)) {
-                this.finishedAt = new Date();
-                this.exportPage('zip');
-              }
-            })
-            .catch(error => {
-              this.failCount++;
-              this.updatePage({ ...page, error, state: 'error' });
-            })
-            .finally(() => {
-              this.downloadingCount--;
-
-              if (this.successCount + this.failCount <= this.pages.length) {
-                this.pushDownloading();
-              } else if (this.failCount > 0 && confirm('下载未全部完成，是否重试？')) {
-                this.pushDownloading();
-              }
-            });
-
-          this.downloadingCount++;
-        }
-      }
-
-      exportPage(type) {
-        const info = {
-          ...this._pageInfo,
-          title: this.title,
-          finishedAt: this.finishedAt,
-          pages: this.pages,
-          startedAt: this.startedAt,
-        };
-
-        if (type === 'zip') {
-          exportZip(info);
-        } else if (type === 'txt') {
-          exportUrl(info);
-        }
-      }
-
-      updateState() {
-        this.container.querySelector('.title').innerText = `
-        总页数：${this.pages.length} | 正在下载：${this.downloadingCount} | 已下载：${this.successCount} | 失败：${this.failCount}
-      `.trim();
-      }
-
-      get pages() {
-        return this._pages;
-      }
-
-      set pages(items) {
-        this._pages = items;
-        this.updateState();
-      }
-
-      get downloadingCount() {
-        return this._downloadingCount;
-      }
-
-      set downloadingCount(num) {
-        this._downloadingCount = num;
-        this.updateState();
-      }
-
-      get successCount() {
-        return this._successCount;
-      }
-
-      set successCount(num) {
-        this._successCount = num;
-        this.updateState();
-      }
-
-      get failCount() {
-        return this._failCount;
-      }
-
-      set failCount(num) {
-        this._failCount = num;
-        this.updateState();
-      }
-
-      set loading(flag) {
-        if (flag) {
-          this.container.classList.add('loading');
-        } else {
-          this.container.classList.remove('loading');
-        }
-      }
-
-      set resolved(flag) {
-        if (flag) {
-          this.container.classList.add('resolved');
-        } else {
-          this.container.classList.remove('resolved');
-        }
+        this.vm.$destroy();
       }
     }
   );
 
-  var itemRoot = "<style>\n  :host > div {\n    padding: 5px;\n    flex: 1;\n  }\n\n  :host > div.index {\n    width: 40px;\n    text-align: right;\n    flex: 0 1 auto;\n  }\n\n  :host > div.state {\n    width: 60px;\n    flex: 0 1 auto;\n  }\n</style>\n<div class=\"index\"><slot name=\"index\">1</slot></div>\n<div><slot name=\"url\"></slot></div>\n<div class=\"state\"><slot name=\"state\"></slot></div>\n";
-
   customElements.define(
-    'resolve-item',
-    class extends HTMLElement {
+    'download-button',
+    class extends HTMLAnchorElement {
       constructor() {
         super();
-        
-        this.classList.add('row');
-        this.attachShadow({ mode: 'open' });
-        this.shadowRoot.innerHTML = itemRoot;
+
+        this.addEventListener('click', this.download);
       }
-    }
+
+      connectedCallback() {
+        this.className = 'btn';
+        this.style = 'width: 130px';
+        this.innerText = '解析图片地址';
+      }
+
+      download(event) {
+        event.preventDefault();
+        const box = document.getElementById('download-box');
+
+        if (box && confirm('正在下载中，是否重新下载？')) {
+          box.remove();
+        }
+
+        document.body.insertAdjacentHTML(
+          'beforeend',
+          `<download-box id="download-box"></download-box>`
+        );
+      }
+    },
+    { extends: 'a' }
   );
 
   const panel = document.querySelector('.asTBcell.uwthumb');
