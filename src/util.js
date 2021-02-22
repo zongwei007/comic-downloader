@@ -37,12 +37,8 @@ export function promisePool(limit) {
   let pendings = [];
 
   function call() {
-    while (running < limit) {
+    while (running < limit && pendings.length) {
       const runnable = pendings.shift();
-
-      if (!runnable) {
-        break;
-      }
 
       runnable().finally(() => {
         running--;

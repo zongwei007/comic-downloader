@@ -21,25 +21,11 @@ async function resolvePageUrl(indexPageUrl, onChange) {
     link => link.href
   );
 
-  return new Promise((resolve, reject) => {
-    const pages = [];
+  for (const pageUrl of links) {
+    threadPool.push(() => resolvePage(pageUrl).then(onChange));
+  }
 
-    for (const pageUrl of links) {
-      threadPool.push(() =>
-        resolvePage(pageUrl).then(page => {
-          pages.push(page);
-
-          onChange(page);
-
-          console.log(`[CD] 解析 ${pageUrl} 完成`);
-
-          if (pages.length === links.length) {
-            resolve(pages);
-          }
-        }, reject)
-      );
-    }
-  });
+  return links;
 }
 
 async function resolvePage(pageUrl) {
@@ -50,15 +36,19 @@ async function resolvePage(pageUrl) {
   const pageLabels = content.querySelector('.newpagewrap .newpagelabel').innerText.split('/');
   const fileName = /[^/]+(?!.*\/)/.exec(imageUrl)[0];
 
-  return {
-    pageUrl,
-    imageUrl,
-    fileName,
-    index: parseInt(pageLabels[0]),
-    indexName: formatPageNumber(pageLabels[0], pageLabels[1].length) + '.' + /[^.]+(?!.*\.)/.exec(fileName),
-    state: 'pending',
-    total: parseInt(pageLabels[1]),
-  };
+  try {
+    return {
+      pageUrl,
+      imageUrl,
+      fileName,
+      index: parseInt(pageLabels[0]),
+      indexName: formatPageNumber(pageLabels[0], pageLabels[1].length) + '.' + /[^.]+(?!.*\.)/.exec(fileName),
+      state: 'pending',
+      total: parseInt(pageLabels[1]),
+    };
+  } finally {
+    console.log(`[CD] 解析 ${pageUrl} 完成`);
+  }
 }
 
 export function resolveAllPage(onChange) {
@@ -66,18 +56,20 @@ export function resolveAllPage(onChange) {
   const lastPage = parseInt(paginations.item(paginations.length - 1).innerText);
 
   return new Promise((resolve, reject) => {
-    let resolved = 0;
+    const links = [];
     const allPages = [];
 
     for (let index = 1; index <= lastPage; index++) {
       threadPool.push(() =>
-        resolvePageUrl(resolveIndexPageUrl(index), onChange).then(pages => {
-          resolved++;
-          allPages.push(...pages);
+        resolvePageUrl(resolveIndexPageUrl(index), page => {
+          allPages.push(page);
+          onChange(page);
 
-          if (resolved >= lastPage) {
+          if (links.length >= allPages.length) {
             resolve(allPages);
           }
+        }).then(links => {
+          links.push(...links);
         }, reject)
       );
     }
