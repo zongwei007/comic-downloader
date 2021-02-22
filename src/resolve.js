@@ -56,7 +56,7 @@ export function resolveAllPage(onChange) {
   const lastPage = parseInt(paginations.item(paginations.length - 1).innerText);
 
   return new Promise((resolve, reject) => {
-    const links = [];
+    const allLinks = [];
     const allPages = [];
 
     for (let index = 1; index <= lastPage; index++) {
@@ -65,11 +65,11 @@ export function resolveAllPage(onChange) {
           allPages.push(page);
           onChange(page);
 
-          if (links.length >= allPages.length) {
+          if (allPages.length >= links.length) {
             resolve(allPages);
           }
         }).then(links => {
-          links.push(...links);
+          allLinks.push(...links);
         }, reject)
       );
     }
