@@ -44,7 +44,8 @@ export async function exportZip(info) {
 export function downloadImage(imageUrl, { onProgress, ...options }) {
   return new Promise((resolve, reject) => {
     let lastProgress = 0;
-    let lastTimestamp = new Date().getTime();
+    let lastTimestamp = Date.now();
+    let speedText = '0 KB/s';
 
     GM_xmlhttpRequest({
       ...options,
@@ -53,9 +54,7 @@ export function downloadImage(imageUrl, { onProgress, ...options }) {
       responseType: 'arraybuffer',
       timeout: 5 * 60 * 1000,
       onprogress(res) {
-        let speedText = '0 KB/s';
-
-        const now = new Date().getTime();
+        const now = Date.now();
         const speedKBs = res.lengthComputable
           ? Number((res.loaded - lastProgress) / (now - lastTimestamp) / 1.024)
           : -1;

@@ -3,7 +3,7 @@
 // @name         批量打包下载漫画
 // @author       zongwei007
 // @namespace    https://github.com/zongwei007/
-// @version      1.2.1
+// @version      1.2.2
 // @description  解析漫画网站图片地址，下载图片并打包为 zip 文件，或导出为文本
 // @match        www.wnacg.org/*
 // @grant        GM_xmlhttpRequest
@@ -249,7 +249,8 @@
   function downloadImage(imageUrl, { onProgress, ...options }) {
     return new Promise((resolve, reject) => {
       let lastProgress = 0;
-      let lastTimestamp = new Date().getTime();
+      let lastTimestamp = Date.now();
+      let speedText = '0 KB/s';
 
       GM_xmlhttpRequest({
         ...options,
@@ -258,9 +259,7 @@
         responseType: 'arraybuffer',
         timeout: 5 * 60 * 1000,
         onprogress(res) {
-          let speedText = '0 KB/s';
-
-          const now = new Date().getTime();
+          const now = Date.now();
           const speedKBs = res.lengthComputable
             ? Number((res.loaded - lastProgress) / (now - lastTimestamp) / 1.024)
             : -1;
