@@ -3,7 +3,7 @@
 // @name         批量打包下载漫画
 // @author       zongwei007
 // @namespace    https://github.com/zongwei007/
-// @version      1.2.3
+// @version      1.2.4
 // @description  解析漫画网站图片地址，下载图片并打包为 zip 文件，或导出为文本
 // @match        www.wnacg.org/*
 // @grant        GM_xmlhttpRequest
@@ -173,6 +173,7 @@
     const lastPage = parseInt(paginations.item(paginations.length - 1).innerText);
 
     return new Promise((resolve, reject) => {
+      const allLinks = [];
       const allPages = [];
 
       for (let index = 1; index <= lastPage; index++) {
@@ -181,10 +182,11 @@
             allPages.push(page);
             onChange(page);
 
-            if (allPages.length >= links.length) {
+            if (allPages.length >= allLinks.length) {
               resolve(allPages);
             }
           }).then(links => {
+            allLinks.push(...links);
           }, reject)
         );
       }

@@ -65,7 +65,7 @@ export function resolveAllPage(onChange) {
           allPages.push(page);
           onChange(page);
 
-          if (allPages.length >= links.length) {
+          if (allPages.length >= allLinks.length) {
             resolve(allPages);
           }
         }).then(links => {
