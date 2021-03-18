@@ -3,7 +3,7 @@
 // @name         批量打包下载漫画
 // @author       zongwei007
 // @namespace    https://github.com/zongwei007/
-// @version      1.2.4
+// @version      1.3.0
 // @description  解析漫画网站图片地址，下载图片并打包为 zip 文件，或导出为文本
 // @match        www.wnacg.org/*
 // @grant        GM_xmlhttpRequest
@@ -214,7 +214,7 @@
     FileSaver_min.saveAs(blob, `${info.title}.info.txt`);
   }
 
-  async function exportZip(info) {
+  async function exportZip(info, onUpdate) {
     const zip = new JSZip();
     const folder = zip.folder(info.title);
 
@@ -226,7 +226,7 @@
 
     folder.file('info.txt', new Blob([textInfoTemplate(info)], { type: 'text/plain;charset=utf-8' }));
 
-    const blob = await zip.generateAsync({ type: 'blob' });
+    const blob = await zip.generateAsync({ type: 'blob' }, onUpdate);
 
     FileSaver_min.saveAs(blob, `${info.title}.zip`);
   }
@@ -323,7 +323,7 @@
     });
   }
 
-  var html = "<style>\n  .container {\n    position: fixed;\n    right: 0;\n    bottom: 0;\n    width: 33%;\n    height: 30%;\n    padding: 0.5rem;\n    background: #666;\n    border-top-right-radius: 5px;\n    border-top-left-radius: 5px;\n    border: 1px solid #333;\n    opacity: 98%;\n    color: #eee;\n  }\n\n  .container h4 {\n    margin: 0;\n  }\n\n  .btn-close,\n  .btn-folder {\n    float: right;\n    cursor: pointer;\n    padding: 0 5px;\n  }\n\n  .btn-folder::after {\n    display: inline;\n    content: '▼';\n  }\n\n  .spinner {\n    display: none;\n  }\n\n  .spinner::after {\n    content: '';\n    display: inline;\n    animation: loading-spinner;\n    animation-duration: 5s;\n    animation-iteration-count: infinite;\n  }\n\n  @keyframes loading-spinner {\n    20% {\n      content: '.';\n    }\n\n    40% {\n      content: '..';\n    }\n\n    60% {\n      content: '...';\n    }\n\n    80% {\n      content: '....';\n    }\n\n    100% {\n      content: '.....';\n    }\n  }\n\n  .loading .spinner {\n    display: inline;\n  }\n\n  .list {\n    width: 100%;\n    max-height: calc(100% - 60px);\n    overflow: auto;\n  }\n\n  .list .row {\n    display: flex;\n  }\n\n  .row.header {\n    font-weight: bolder;\n  }\n\n  .row > div {\n    padding: 5px;\n    flex: 1;\n  }\n\n  .row > div.index {\n    width: 40px;\n    text-align: right;\n    flex: 0 1 auto;\n  }\n\n  .row > div.state {\n    width: 60px;\n    flex: 0 1 auto;\n  }\n\n  .progress {\n    height: 14px;\n    overflow: hidden;\n    border: 1px solid #eee;\n  }\n\n  .progress > .progress-bar {\n    float: left;\n    height: 100%;\n    color: #333;\n    text-align: center;\n    background-color: #eee;\n  }\n\n  .toolbar {\n    height: 60px;\n    display: none;\n    padding-top: 10px;\n  }\n\n  .toolbar > div {\n    flex: 1;\n  }\n\n  .toolbar > .buttons {\n    text-align: right;\n  }\n\n  .status-failed {\n    color: #b60202;\n  }\n\n  .fold .btn-folder::after {\n    content: '▲';\n  }\n\n  .fold.container {\n    height: 15px;\n  }\n\n  .fold .list,\n  .fold .toolbar {\n    display: none;\n  }\n\n  .resolved .toolbar {\n    display: flex;\n  }\n</style>\n\n<div class=\"container\" v-bind:class=\"{ fold, loading, resolved }\">\n  <h4>\n    <span class=\"title\">\n      总页数：{{ pages.length }} | 正在下载：{{ downloadingCount }} | 已下载：{{ successCount }} | 失败：{{ failCount }}\n    </span>\n    <span class=\"spinner\"></span>\n    <a class=\"btn-close\" v-on:click=\"close\">╳</a>\n    <a class=\"btn-folder\" v-on:click=\"toggleFold\"></a>\n  </h4>\n  <hr />\n  <div class=\"list\">\n    <page-item class=\"header\">\n      <template v-slot:index>序号</template>\n      <template v-slot:url>页面</template>\n      <template v-slot:state>状态</template>\n    </page-item>\n    <page-item\n      v-for=\"page in currentPages\"\n      :key=\"page.index\"\n      :state=\"page.state\"\n      :index=\"page.index\"\n      :url=\"page.pageUrl\"\n      :progress=\"page.progress\"\n      :progress-text=\"page.progressText\"\n    />\n  </div>\n  <div class=\"toolbar\">\n    <div class=\"download-status\"></div>\n    <div class=\"buttons\">\n      <button class=\"btn-export-url\" v-on:click=\"exportPage('txt')\">导出 URL</button>\n      <button class=\"btn-export-zip\" v-on:click=\"exportPage('zip')\">导出 ZIP</button>\n    </div>\n  </div>\n</div>\n";
+  var html = "<style>\n  .container {\n    position: fixed;\n    right: 0;\n    bottom: 0;\n    width: 33%;\n    height: 30%;\n    padding: 0.5rem;\n    background: #666;\n    border-top-right-radius: 5px;\n    border-top-left-radius: 5px;\n    border: 1px solid #333;\n    opacity: 98%;\n    color: #eee;\n  }\n\n  .container h4 {\n    margin: 0;\n  }\n\n  .btn-close,\n  .btn-folder {\n    float: right;\n    cursor: pointer;\n    padding: 0 5px;\n  }\n\n  .btn-folder::after {\n    display: inline;\n    content: '▼';\n  }\n\n  .spinner {\n    display: inline;\n  }\n\n  .spinner::after {\n    content: '';\n    display: inline;\n    animation: loading-spinner;\n    animation-duration: 5s;\n    animation-iteration-count: infinite;\n  }\n\n  @keyframes loading-spinner {\n    20% {\n      content: '.';\n    }\n\n    40% {\n      content: '..';\n    }\n\n    60% {\n      content: '...';\n    }\n\n    80% {\n      content: '....';\n    }\n\n    100% {\n      content: '.....';\n    }\n  }\n\n  .list {\n    width: 100%;\n    max-height: calc(100% - 60px);\n    overflow: auto;\n  }\n\n  .list .row {\n    display: flex;\n  }\n\n  .row.header {\n    font-weight: bolder;\n  }\n\n  .row > div {\n    padding: 5px;\n    flex: 1;\n  }\n\n  .row > div.index {\n    width: 40px;\n    text-align: right;\n    flex: 0 1 auto;\n  }\n\n  .row > div.state {\n    width: 60px;\n    flex: 0 1 auto;\n  }\n\n  .progress {\n    height: 14px;\n    overflow: hidden;\n    border: 1px solid #eee;\n  }\n\n  .progress > .progress-bar {\n    float: left;\n    height: 100%;\n    color: #333;\n    text-align: center;\n    background-color: #eee;\n  }\n\n  .toolbar {\n    height: 60px;\n    display: flex;\n    padding-top: 10px;\n  }\n\n  .toolbar > div {\n    flex: 1;\n  }\n\n  .toolbar > .buttons {\n    text-align: right;\n  }\n\n  .status-failed {\n    color: #b60202;\n  }\n\n  .fold .btn-folder::after {\n    content: '▲';\n  }\n\n  .fold.container {\n    height: 15px;\n  }\n\n  .fold .list,\n  .fold .toolbar {\n    display: none;\n  }\n</style>\n\n<div class=\"container\" v-bind:class=\"{ fold }\">\n  <h4>\n    <span v-if=\"title\">{{ title }} | </span>\n    <span> 总页数：{{ pageTotal }} | 正在下载：{{ downloadingCount }} | 失败：{{ failCount }} </span>\n    <span v-if=\"loading\" class=\"spinner\"></span>\n    <a class=\"btn-close\" v-on:click=\"close\">╳</a>\n    <a class=\"btn-folder\" v-on:click=\"toggleFold\"></a>\n  </h4>\n  <hr />\n  <div class=\"list\">\n    <page-item class=\"header\">\n      <template v-slot:index>序号</template>\n      <template v-slot:url>页面</template>\n      <template v-slot:state>状态</template>\n    </page-item>\n    <page-item\n      v-for=\"page in currentPages\"\n      :key=\"page.index\"\n      :state=\"page.state\"\n      :index=\"page.index\"\n      :url=\"page.pageUrl\"\n      :progress=\"page.progress\"\n      :progress-text=\"page.progressText\"\n    />\n  </div>\n  <div v-if=\"resolved\" class=\"toolbar\">\n    <div class=\"download-status\"></div>\n    <div class=\"buttons\">\n      <button class=\"btn-export-url\" v-on:click=\"exportPage('txt')\">导出 URL</button>\n      <button class=\"btn-export-zip\" v-bind:disabled=\"exporting\" v-on:click=\"exportPage('zip')\">导出 ZIP</button>\n    </div>\n  </div>\n</div>\n";
 
   const DOWNLOAD_THREAD_LIMIT$1 = 5;
 
@@ -344,12 +344,15 @@
       el,
       data: {
         downloadingCount: 0,
+        exporting: false,
         fold: false,
         failCount: 0,
         loading: false,
         pages: [],
+        pageTotal: 0,
         resolved: false,
         successCount: 0,
+        title: null,
       },
 
       components: {
@@ -376,32 +379,29 @@
 
           console.log(`[CD] 开始解析 ${comicInfo.title}`);
 
-          try {
-            for await (const page of resolveAllPage()) {
-              if (canceled) {
-                return;
-              }
-
-              if (!this.pages.length) {
-                this.pages = new Array(page.total).fill(null);
-              }
-
-              this.updatePage(page);
+          for await (const page of resolveAllPage()) {
+            if (canceled) {
+              return;
             }
 
-            await this.downloadAllPage();
-
-            comicInfo.finishedAt = new Date();
-
-            this.loading = false;
-            this.resolved = true;
-
-            console.log(`[CD] 解析 ${comicInfo.title} 完毕`);
-          } catch (e) {
-            if (e.message !== 'stop-download') {
-              console.error(e);
+            if (!this.pageTotal) {
+              this.pageTotal = page.total;
             }
+
+            const length = this.pages.push(page);
+
+            this.title = `已解析：${length}`;
+            this.updatePage(page);
           }
+
+          console.log(`[CD] 解析 ${comicInfo.title} 完毕`);
+
+          this.resolved = true;
+
+          await this.downloadAllPage();
+
+          this.loading = false;
+          this.title = null;
         },
 
         updatePage(page) {
@@ -427,20 +427,21 @@
             if (canceled) {
               return;
             }
+            this.successCount++;
+            this.title = `已下载：${this.successCount}`;
 
             this.updatePage(page);
-            this.successCount++;
           }
 
           if (this.successCount === this.pages.length && this.pages.every(ele => ele.buffer)) {
-            this.finishedAt = new Date();
-            this.exportPage('zip');
+            this.finishedAt = comicInfo.finishedAt = new Date();
+            await this.exportPage('zip');
           } else if (
             this.successCount + this.failCount >= this.pages.length &&
             this.failCount > 0 &&
             confirm('下载未全部完成，是否重试？')
           ) {
-            this.downloadAllPage();
+            return this.downloadAllPage();
           }
         },
 
@@ -468,14 +469,23 @@
           }
         },
 
-        exportPage(type) {
+        async exportPage(type) {
           const info = { ...comicInfo, pages: this.pages };
 
+          this.exporting = true;
+
           if (type === 'zip') {
-            exportZip(info);
+            await exportZip(info, ({ percent, currentFile }) => {
+              if (currentFile) {
+                const fileName = currentFile.substring(currentFile.lastIndexOf('/') + 1);
+                this.title = `正在导出：${fileName} | ${percent.toFixed(2)}%`;
+              }
+            });
           } else if (type === 'txt') {
-            exportUrl(info);
+            await exportUrl(info);
           }
+
+          this.exporting = false;
         },
 
         close() {

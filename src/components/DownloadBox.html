@@ -31,7 +31,7 @@
   }
 
   .spinner {
-    display: none;
+    display: inline;
   }
 
   .spinner::after {
@@ -62,10 +62,6 @@
     100% {
       content: '.....';
     }
-  }
-
-  .loading .spinner {
-    display: inline;
   }
 
   .list {
@@ -114,7 +110,7 @@
 
   .toolbar {
     height: 60px;
-    display: none;
+    display: flex;
     padding-top: 10px;
   }
 
@@ -142,18 +138,13 @@
   .fold .toolbar {
     display: none;
   }
-
-  .resolved .toolbar {
-    display: flex;
-  }
 </style>
 
-<div class="container" v-bind:class="{ fold, loading, resolved }">
+<div class="container" v-bind:class="{ fold }">
   <h4>
-    <span class="title">
-      总页数：{{ pages.length }} | 正在下载：{{ downloadingCount }} | 已下载：{{ successCount }} | 失败：{{ failCount }}
-    </span>
-    <span class="spinner"></span>
+    <span v-if="title">{{ title }} | </span>
+    <span> 总页数：{{ pageTotal }} | 正在下载：{{ downloadingCount }} | 失败：{{ failCount }} </span>
+    <span v-if="loading" class="spinner"></span>
     <a class="btn-close" v-on:click="close">╳</a>
     <a class="btn-folder" v-on:click="toggleFold"></a>
   </h4>
@@ -174,11 +165,11 @@
       :progress-text="page.progressText"
     />
   </div>
-  <div class="toolbar">
+  <div v-if="resolved" class="toolbar">
     <div class="download-status"></div>
     <div class="buttons">
       <button class="btn-export-url" v-on:click="exportPage('txt')">导出 URL</button>
-      <button class="btn-export-zip" v-on:click="exportPage('zip')">导出 ZIP</button>
+      <button class="btn-export-zip" v-bind:disabled="exporting" v-on:click="exportPage('zip')">导出 ZIP</button>
     </div>
   </div>
 </div>

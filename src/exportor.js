@@ -24,7 +24,7 @@ export async function exportUrl(info) {
   saveAs(blob, `${info.title}.info.txt`);
 }
 
-export async function exportZip(info) {
+export async function exportZip(info, onUpdate) {
   const zip = new JSZip();
   const folder = zip.folder(info.title);
 
@@ -36,7 +36,7 @@ export async function exportZip(info) {
 
   folder.file('info.txt', new Blob([textInfoTemplate(info)], { type: 'text/plain;charset=utf-8' }));
 
-  const blob = await zip.generateAsync({ type: 'blob' });
+  const blob = await zip.generateAsync({ type: 'blob' }, onUpdate);
 
   saveAs(blob, `${info.title}.zip`);
 }

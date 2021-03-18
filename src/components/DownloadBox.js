@@ -25,12 +25,15 @@ function DownloadBox(el) {
     el,
     data: {
       downloadingCount: 0,
+      exporting: false,
       fold: false,
       failCount: 0,
       loading: false,
       pages: [],
+      pageTotal: 0,
       resolved: false,
       successCount: 0,
+      title: null,
     },
 
     components: {
@@ -57,32 +60,29 @@ function DownloadBox(el) {
 
         console.log(`[CD] 开始解析 ${comicInfo.title}`);
 
-        try {
-          for await (const page of resolveAllPage()) {
-            if (canceled) {
-              return;
-            }
-
-            if (!this.pages.length) {
-              this.pages = new Array(page.total).fill(null);
-            }
-
-            this.updatePage(page);
+        for await (const page of resolveAllPage()) {
+          if (canceled) {
+            return;
           }
 
-          await this.downloadAllPage();
-
-          comicInfo.finishedAt = new Date();
-
-          this.loading = false;
-          this.resolved = true;
-
-          console.log(`[CD] 解析 ${comicInfo.title} 完毕`);
-        } catch (e) {
-          if (e.message !== 'stop-download') {
-            console.error(e);
+          if (!this.pageTotal) {
+            this.pageTotal = page.total;
           }
+
+          const length = this.pages.push(page);
+
+          this.title = `已解析：${length}`;
+          this.updatePage(page);
         }
+
+        console.log(`[CD] 解析 ${comicInfo.title} 完毕`);
+
+        this.resolved = true;
+
+        await this.downloadAllPage();
+
+        this.loading = false;
+        this.title = null;
       },
 
       updatePage(page) {
@@ -108,20 +108,21 @@ function DownloadBox(el) {
           if (canceled) {
             return;
           }
+          this.successCount++;
+          this.title = `已下载：${this.successCount}`;
 
           this.updatePage(page);
-          this.successCount++;
         }
 
         if (this.successCount === this.pages.length && this.pages.every(ele => ele.buffer)) {
-          this.finishedAt = new Date();
-          this.exportPage('zip');
+          this.finishedAt = comicInfo.finishedAt = new Date();
+          await this.exportPage('zip');
         } else if (
           this.successCount + this.failCount >= this.pages.length &&
           this.failCount > 0 &&
           confirm('下载未全部完成，是否重试？')
         ) {
-          this.downloadAllPage();
+          return this.downloadAllPage();
         }
       },
 
@@ -149,14 +150,23 @@ function DownloadBox(el) {
         }
       },
 
-      exportPage(type) {
+      async exportPage(type) {
         const info = { ...comicInfo, pages: this.pages };
 
+        this.exporting = true;
+
         if (type === 'zip') {
-          exportZip(info);
+          await exportZip(info, ({ percent, currentFile }) => {
+            if (currentFile) {
+              const fileName = currentFile.substring(currentFile.lastIndexOf('/') + 1);
+              this.title = `正在导出：${fileName} | ${percent.toFixed(2)}%`;
+            }
+          });
         } else if (type === 'txt') {
-          exportUrl(info);
+          await exportUrl(info);
         }
+
+        this.exporting = false;
       },
 
       close() {
