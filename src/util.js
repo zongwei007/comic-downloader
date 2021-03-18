@@ -32,28 +32,22 @@ export function formatPageNumber(num, length) {
   return name;
 }
 
-export function promisePool(limit) {
-  let running = 0;
-  let pendings = [];
+export async function* createPromisePool(executors, limit) {
+  const running = [];
 
-  function call() {
-    while (running < limit && pendings.length) {
-      const runnable = pendings.shift();
-
-      runnable().finally(() => {
-        running--;
-        call();
-      });
-
-      running++;
-    }
-  }
-
-  return {
-    push(runnable) {
-      pendings.push(runnable);
-
-      call();
-    },
+  const invoker = executor => {
+    running.push(
+      executor().finally(() => {
+        if (executors.length) {
+          invoker(executors.shift());
+        }
+      })
+    );
   };
+
+  executors.splice(0, limit).forEach(invoker);
+
+  while (running.length) {
+    yield running.shift();
+  }
 }

@@ -2,7 +2,7 @@ import PageItem from './PageItem';
 
 import { resolveAllPage } from '../resolve';
 import { exportUrl, exportZip, downloadImage } from '../exportor';
-import { promisePool } from '../util';
+import { createPromisePool } from '../util';
 
 import html from './DownloadBox.html';
 
@@ -10,8 +10,6 @@ const DOWNLOAD_THREAD_LIMIT = 5;
 
 function DownloadBox(el) {
   let canceled = false;
-
-  const threadPool = promisePool(DOWNLOAD_THREAD_LIMIT);
 
   const comicInfo = {
     finishedAt: null,
@@ -60,9 +58,9 @@ function DownloadBox(el) {
         console.log(`[CD] 开始解析 ${comicInfo.title}`);
 
         try {
-          await resolveAllPage(page => {
+          for await (const page of resolveAllPage()) {
             if (canceled) {
-              throw new Error('stop-download');
+              return;
             }
 
             if (!this.pages.length) {
@@ -70,9 +68,9 @@ function DownloadBox(el) {
             }
 
             this.updatePage(page);
+          }
 
-            this.pushDownloading(page);
-          });
+          await this.downloadAllPage();
 
           comicInfo.finishedAt = new Date();
 
@@ -101,44 +99,54 @@ function DownloadBox(el) {
         }
       },
 
-      pushDownloading(page) {
-        threadPool.push(async () => {
-          if (page.state === 'error') {
-            this.failCount--;
+      async downloadAllPage() {
+        const executors = this.pages
+          .filter(page => page.state !== 'downloaded')
+          .map(page => () => this.downloadPage(page));
+
+        for await (const page of createPromisePool(executors, DOWNLOAD_THREAD_LIMIT)) {
+          if (canceled) {
+            return;
           }
 
-          this.updatePage({ ...page, state: 'downloading' });
+          this.updatePage(page);
+          this.successCount++;
+        }
 
-          this.downloadingCount++;
+        if (this.successCount === this.pages.length && this.pages.every(ele => ele.buffer)) {
+          this.finishedAt = new Date();
+          this.exportPage('zip');
+        } else if (
+          this.successCount + this.failCount >= this.pages.length &&
+          this.failCount > 0 &&
+          confirm('下载未全部完成，是否重试？')
+        ) {
+          this.downloadAllPage();
+        }
+      },
 
-          try {
-            const buffer = await downloadImage(page.imageUrl, {
-              onProgress: info => this.updatePage({ ...page, ...info, state: 'downloading' }),
-              headers: { Referer: page.pageUrl, 'X-Alt-Referer': page.pageUrl, Cookie: document.cookie },
-            });
+      async downloadPage(page) {
+        if (page.state === 'error') {
+          this.failCount--;
+        }
 
-            this.updatePage({ ...page, buffer, state: 'downloaded' });
-            this.successCount++;
+        this.updatePage({ ...page, state: 'downloading' });
 
-            if (this.successCount === this.pages.length && this.pages.every(ele => ele.buffer)) {
-              this.finishedAt = new Date();
-              this.exportPage('zip');
-            }
-          } catch (error) {
-            this.failCount++;
-            this.updatePage({ ...page, error, state: 'error' });
-          } finally {
-            this.downloadingCount--;
+        this.downloadingCount++;
 
-            if (
-              this.successCount + this.failCount >= this.pages.length &&
-              this.failCount > 0 &&
-              confirm('下载未全部完成，是否重试？')
-            ) {
-              this.pages.filter(page => page.state === 'error').forEach(page => this.pushDownloading(page));
-            }
-          }
-        });
+        try {
+          const buffer = await downloadImage(page.imageUrl, {
+            onProgress: info => this.updatePage({ ...page, ...info, state: 'downloading' }),
+            headers: { Referer: page.pageUrl, 'X-Alt-Referer': page.pageUrl, Cookie: document.cookie },
+          });
+
+          return { ...page, buffer, state: 'downloaded' };
+        } catch (error) {
+          this.failCount++;
+          this.updatePage({ ...page, error, state: 'error' });
+        } finally {
+          this.downloadingCount--;
+        }
       },
 
       exportPage(type) {

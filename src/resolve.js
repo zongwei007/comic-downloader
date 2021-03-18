@@ -1,9 +1,7 @@
-import { parseHTML, formatPageNumber, promisePool } from './util';
+import { parseHTML, formatPageNumber, createPromisePool } from './util';
 
 const HOME_PAGE_URL = location.href;
 const DOWNLOAD_THREAD_LIMIT = 5;
-
-const threadPool = promisePool(DOWNLOAD_THREAD_LIMIT);
 
 function resolveIndexPageUrl(index) {
   return HOME_PAGE_URL.replace('aid', `page-${index}-aid`);
@@ -15,17 +13,10 @@ async function requestPage(url, options) {
   return await resp.text();
 }
 
-async function resolvePageUrl(indexPageUrl, onChange) {
+async function resolvePageUrl(indexPageUrl) {
   const content = parseHTML(await requestPage(indexPageUrl));
-  const links = [...content.querySelectorAll('#bodywrap .gallary_wrap .gallary_item .pic_box a')].map(
-    link => link.href
-  );
 
-  for (const pageUrl of links) {
-    threadPool.push(() => resolvePage(pageUrl).then(onChange));
-  }
-
-  return links;
+  return [...content.querySelectorAll('#bodywrap .gallary_wrap .gallary_item .pic_box a')].map(link => link.href);
 }
 
 async function resolvePage(pageUrl) {
@@ -51,27 +42,27 @@ async function resolvePage(pageUrl) {
   }
 }
 
-export function resolveAllPage(onChange) {
+export async function* resolveAllPage() {
   const paginations = document.querySelectorAll('.bot_toolbar .paginator > a');
   const lastPage = parseInt(paginations.item(paginations.length - 1).innerText);
+  const indexPageUrls = [];
+  const pageUrls = [];
 
-  return new Promise((resolve, reject) => {
-    const allLinks = [];
-    const allPages = [];
+  for (let index = 1; index <= lastPage; index++) {
+    indexPageUrls.push(resolveIndexPageUrl(index));
+  }
 
-    for (let index = 1; index <= lastPage; index++) {
-      threadPool.push(() =>
-        resolvePageUrl(resolveIndexPageUrl(index), page => {
-          allPages.push(page);
-          onChange(page);
+  for await (const pages of createPromisePool(
+    indexPageUrls.map(url => () => resolvePageUrl(url)),
+    DOWNLOAD_THREAD_LIMIT
+  )) {
+    pageUrls.push(...pages);
+  }
 
-          if (allPages.length >= allLinks.length) {
-            resolve(allPages);
-          }
-        }).then(links => {
-          allLinks.push(...links);
-        }, reject)
-      );
-    }
-  });
+  for await (const page of createPromisePool(
+    pageUrls.map(url => () => resolvePage(url)),
+    DOWNLOAD_THREAD_LIMIT
+  )) {
+    yield page;
+  }
 }

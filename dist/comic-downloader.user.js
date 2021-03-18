@@ -91,36 +91,28 @@
     return name;
   }
 
-  function promisePool(limit) {
-    let running = 0;
-    let pendings = [];
+  async function* createPromisePool(executors, limit) {
+    const running = [];
 
-    function call() {
-      while (running < limit && pendings.length) {
-        const runnable = pendings.shift();
-
-        runnable().finally(() => {
-          running--;
-          call();
-        });
-
-        running++;
-      }
-    }
-
-    return {
-      push(runnable) {
-        pendings.push(runnable);
-
-        call();
-      },
+    const invoker = executor => {
+      running.push(
+        executor().finally(() => {
+          if (executors.length) {
+            invoker(executors.shift());
+          }
+        })
+      );
     };
+
+    executors.splice(0, limit).forEach(invoker);
+
+    while (running.length) {
+      yield running.shift();
+    }
   }
 
   const HOME_PAGE_URL = location.href;
   const DOWNLOAD_THREAD_LIMIT = 5;
-
-  const threadPool = promisePool(DOWNLOAD_THREAD_LIMIT);
 
   function resolveIndexPageUrl(index) {
     return HOME_PAGE_URL.replace('aid', `page-${index}-aid`);
@@ -132,17 +124,10 @@
     return await resp.text();
   }
 
-  async function resolvePageUrl(indexPageUrl, onChange) {
+  async function resolvePageUrl(indexPageUrl) {
     const content = parseHTML(await requestPage(indexPageUrl));
-    const links = [...content.querySelectorAll('#bodywrap .gallary_wrap .gallary_item .pic_box a')].map(
-      link => link.href
-    );
 
-    for (const pageUrl of links) {
-      threadPool.push(() => resolvePage(pageUrl).then(onChange));
-    }
-
-    return links;
+    return [...content.querySelectorAll('#bodywrap .gallary_wrap .gallary_item .pic_box a')].map(link => link.href);
   }
 
   async function resolvePage(pageUrl) {
@@ -168,29 +153,29 @@
     }
   }
 
-  function resolveAllPage(onChange) {
+  async function* resolveAllPage() {
     const paginations = document.querySelectorAll('.bot_toolbar .paginator > a');
     const lastPage = parseInt(paginations.item(paginations.length - 1).innerText);
+    const indexPageUrls = [];
+    const pageUrls = [];
 
-    return new Promise((resolve, reject) => {
-      const allLinks = [];
-      const allPages = [];
+    for (let index = 1; index <= lastPage; index++) {
+      indexPageUrls.push(resolveIndexPageUrl(index));
+    }
 
-      for (let index = 1; index <= lastPage; index++) {
-        threadPool.push(() =>
-          resolvePageUrl(resolveIndexPageUrl(index), page => {
-            allPages.push(page);
-            onChange(page);
+    for await (const pages of createPromisePool(
+      indexPageUrls.map(url => () => resolvePageUrl(url)),
+      DOWNLOAD_THREAD_LIMIT
+    )) {
+      pageUrls.push(...pages);
+    }
 
-            if (allPages.length >= allLinks.length) {
-              resolve(allPages);
-            }
-          }).then(links => {
-            allLinks.push(...links);
-          }, reject)
-        );
-      }
-    });
+    for await (const page of createPromisePool(
+      pageUrls.map(url => () => resolvePage(url)),
+      DOWNLOAD_THREAD_LIMIT
+    )) {
+      yield page;
+    }
   }
 
   var commonjsGlobal = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : {};
@@ -345,8 +330,6 @@
   function DownloadBox(el) {
     let canceled = false;
 
-    const threadPool = promisePool(DOWNLOAD_THREAD_LIMIT$1);
-
     const comicInfo = {
       finishedAt: null,
       introduction: document.querySelector('.asTBcell.uwconn > p').innerText.substring(3),
@@ -394,9 +377,9 @@
           console.log(`[CD] 开始解析 ${comicInfo.title}`);
 
           try {
-            await resolveAllPage(page => {
+            for await (const page of resolveAllPage()) {
               if (canceled) {
-                throw new Error('stop-download');
+                return;
               }
 
               if (!this.pages.length) {
@@ -404,9 +387,9 @@
               }
 
               this.updatePage(page);
+            }
 
-              this.pushDownloading(page);
-            });
+            await this.downloadAllPage();
 
             comicInfo.finishedAt = new Date();
 
@@ -435,44 +418,54 @@
           }
         },
 
-        pushDownloading(page) {
-          threadPool.push(async () => {
-            if (page.state === 'error') {
-              this.failCount--;
+        async downloadAllPage() {
+          const executors = this.pages
+            .filter(page => page.state !== 'downloaded')
+            .map(page => () => this.downloadPage(page));
+
+          for await (const page of createPromisePool(executors, DOWNLOAD_THREAD_LIMIT$1)) {
+            if (canceled) {
+              return;
             }
 
-            this.updatePage({ ...page, state: 'downloading' });
+            this.updatePage(page);
+            this.successCount++;
+          }
 
-            this.downloadingCount++;
+          if (this.successCount === this.pages.length && this.pages.every(ele => ele.buffer)) {
+            this.finishedAt = new Date();
+            this.exportPage('zip');
+          } else if (
+            this.successCount + this.failCount >= this.pages.length &&
+            this.failCount > 0 &&
+            confirm('下载未全部完成，是否重试？')
+          ) {
+            this.downloadAllPage();
+          }
+        },
 
-            try {
-              const buffer = await downloadImage(page.imageUrl, {
-                onProgress: info => this.updatePage({ ...page, ...info, state: 'downloading' }),
-                headers: { Referer: page.pageUrl, 'X-Alt-Referer': page.pageUrl, Cookie: document.cookie },
-              });
+        async downloadPage(page) {
+          if (page.state === 'error') {
+            this.failCount--;
+          }
 
-              this.updatePage({ ...page, buffer, state: 'downloaded' });
-              this.successCount++;
+          this.updatePage({ ...page, state: 'downloading' });
 
-              if (this.successCount === this.pages.length && this.pages.every(ele => ele.buffer)) {
-                this.finishedAt = new Date();
-                this.exportPage('zip');
-              }
-            } catch (error) {
-              this.failCount++;
-              this.updatePage({ ...page, error, state: 'error' });
-            } finally {
-              this.downloadingCount--;
+          this.downloadingCount++;
 
-              if (
-                this.successCount + this.failCount >= this.pages.length &&
-                this.failCount > 0 &&
-                confirm('下载未全部完成，是否重试？')
-              ) {
-                this.pages.filter(page => page.state === 'error').forEach(page => this.pushDownloading(page));
-              }
-            }
-          });
+          try {
+            const buffer = await downloadImage(page.imageUrl, {
+              onProgress: info => this.updatePage({ ...page, ...info, state: 'downloading' }),
+              headers: { Referer: page.pageUrl, 'X-Alt-Referer': page.pageUrl, Cookie: document.cookie },
+            });
+
+            return { ...page, buffer, state: 'downloaded' };
+          } catch (error) {
+            this.failCount++;
+            this.updatePage({ ...page, error, state: 'error' });
+          } finally {
+            this.downloadingCount--;
+          }
         },
 
         exportPage(type) {
