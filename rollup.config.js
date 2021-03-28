@@ -1,29 +1,48 @@
 import fs from 'fs';
 
-import { string } from 'rollup-plugin-string';
 import resolve from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
+import svelte from 'rollup-plugin-svelte';
+import sveltePreprocess from 'svelte-preprocess';
+import typescript from '@rollup/plugin-typescript';
+import { terser } from 'rollup-plugin-terser';
+
+const production = !process.env.ROLLUP_WATCH;
 
 export default {
-  input: 'src/main.js',
-  plugins: [string({ include: '**/*.html' }), resolve(), commonjs(), outputMeta()],
+  input: 'src/main.ts',
+  plugins: [
+    resolve(),
+    commonjs(),
+    typescript(),
+    svelte({
+      compilerOptions: {
+        dev: !production,
+      },
+      emitCss: false,
+      preprocess: sveltePreprocess(),
+    }),
+    outputMeta(),
+    ...(!production ? [] : [terser({ format: { comments: 'all' } })]),
+  ],
   output: {
     file: 'dist/comic-downloader.user.js',
     format: 'iife',
-    globals: ['GM_xmlhttpRequest', 'JSZip', 'Vue'],
+    globals: ['GM_xmlhttpRequest', 'JSZip'],
   },
 };
 
 function outputMeta() {
+  const pkg = JSON.parse(fs.readFileSync('./package.json'));
+
   const meta = `// ==UserScript==
 // @name         批量打包下载漫画
 // @author       zongwei007
 // @namespace    https://github.com/zongwei007/
-// @version      1.3.0
+// @version      ${pkg.version}
 // @description  解析漫画网站图片地址，下载图片并打包为 zip 文件，或导出为文本
 // @match        www.wnacg.org/*
 // @grant        GM_xmlhttpRequest
-// @require      https://cdn.jsdelivr.net/npm/vue@2.6.12/dist/vue.min.js#sha256-KSlsysqp7TXtFo/FHjb1T9b425x3hrvzjMWaJyKbpcI=
 // @require      https://cdn.jsdelivr.net/npm/jszip@3.6.0/dist/jszip.min.js#sha256-MB+WKZmHMme2BRVKpDuIbfs6VlSdUIAY1VroUmE+p8g=
 // @downloadURL  https://github.com/zongwei007/comic-downloader/raw/master/dist/comic-downloader.user.js
 // @updateURL    https://github.com/zongwei007/comic-downloader/raw/master/dist/comic-downloader.meta.js

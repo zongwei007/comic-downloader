@@ -1,30 +1,45 @@
 import { parseHTML, formatPageNumber, createPromisePool } from './util';
 
+export type Page = {
+  buffer?: ArrayBuffer;
+  error?: any;
+  fileName: string;
+  imageUrl: string;
+  index: number;
+  indexName: string;
+  meta?: { loaded: number; total: number; progress: number; progressText: string };
+  pageUrl: string;
+  state: 'pending' | 'downloaded' | 'error' | 'downloading';
+  total: number;
+};
+
 const HOME_PAGE_URL = location.href;
 const DOWNLOAD_THREAD_LIMIT = 5;
 
-function resolveIndexPageUrl(index) {
+function resolveIndexPageUrl(index: number) {
   return HOME_PAGE_URL.replace('aid', `page-${index}-aid`);
 }
 
-async function requestPage(url, options) {
+async function requestPage(url: string, options?: RequestInit): Promise<string> {
   const resp = await fetch(url, options);
 
   return await resp.text();
 }
 
-async function resolvePageUrl(indexPageUrl) {
+async function resolvePageUrl(indexPageUrl: string): Promise<string[]> {
   const content = parseHTML(await requestPage(indexPageUrl));
 
-  return [...content.querySelectorAll('#bodywrap .gallary_wrap .gallary_item .pic_box a')].map(link => link.href);
+  return [...content.querySelectorAll<HTMLAnchorElement>('#bodywrap .gallary_wrap .gallary_item .pic_box a')].map(
+    link => link.href
+  );
 }
 
-async function resolvePage(pageUrl) {
+async function resolvePage(pageUrl: string): Promise<Page> {
   console.log(`[CD] 正在解析 ${pageUrl}`);
 
   const content = parseHTML(await requestPage(pageUrl));
-  const imageUrl = content.querySelector('#photo_body #imgarea #picarea').src;
-  const pageLabels = content.querySelector('.newpagewrap .newpagelabel').innerText.split('/');
+  const imageUrl = content.querySelector<HTMLImageElement>('#photo_body #imgarea #picarea').src;
+  const pageLabels = content.querySelector<HTMLElement>('.newpagewrap .newpagelabel').innerText.split('/');
   const fileName = /[^/]+(?!.*\/)/.exec(imageUrl)[0];
 
   try {
@@ -42,9 +57,9 @@ async function resolvePage(pageUrl) {
   }
 }
 
-export async function* resolveAllPage() {
-  const paginations = document.querySelectorAll('.bot_toolbar .paginator > a');
-  const lastPage = parseInt(paginations.item(paginations.length - 1).innerText);
+export async function* resolveAllPage(): AsyncGenerator<Page, void, unknown> {
+  const paginations = document.querySelectorAll<HTMLElement>('.bot_toolbar .paginator > a');
+  const lastPage = parseInt(paginations.item(paginations.length - 1)?.innerText || '1');
   const indexPageUrls = [];
   const pageUrls = [];
 

@@ -1,13 +1,11 @@
-
 // ==UserScript==
 // @name         批量打包下载漫画
 // @author       zongwei007
 // @namespace    https://github.com/zongwei007/
-// @version      1.3.0
+// @version      1.4.0
 // @description  解析漫画网站图片地址，下载图片并打包为 zip 文件，或导出为文本
 // @match        www.wnacg.org/*
 // @grant        GM_xmlhttpRequest
-// @require      https://cdn.jsdelivr.net/npm/vue@2.6.12/dist/vue.min.js#sha256-KSlsysqp7TXtFo/FHjb1T9b425x3hrvzjMWaJyKbpcI=
 // @require      https://cdn.jsdelivr.net/npm/jszip@3.6.0/dist/jszip.min.js#sha256-MB+WKZmHMme2BRVKpDuIbfs6VlSdUIAY1VroUmE+p8g=
 // @downloadURL  https://github.com/zongwei007/comic-downloader/raw/master/dist/comic-downloader.user.js
 // @updateURL    https://github.com/zongwei007/comic-downloader/raw/master/dist/comic-downloader.meta.js
@@ -16,540 +14,94 @@
 // @connect      wnacg.xyz
 // @connect      wnacg.download
 // ==/UserScript==
-
-(function () {
-  'use strict';
-
-  const STATE_MAP = {
-    error: '下载失败',
-    pending: '准备下载',
-    downloading: '下载中',
-    downloaded: '已下载',
-  };
-
-  var PageItem = {
-    props: ['class', 'index', 'url', 'progress', 'progressText', 'state'],
-
-    computed: {
-      hasError() {
-        return this.state === 'error';
-      },
-      isDownloading() {
-        return this.state === 'downloading';
-      },
-      progressWidth() {
-        return `${(this.progress || 0) * 100}%`;
-      },
-      stateText() {
-        return STATE_MAP[this.state];
-      },
-    },
-
-    template: `
-    <div class="row" v-bind:class="{ downloading: isDownloading }">
-      <div class="index"><slot name="index">{{ index }}</slot></div>
-      <div>
-        <slot name="url">
-          <div v-if="isDownloading" class="progress">
-            <div class="progress-bar" v-bind:style="{ width: progressWidth }">{{ progressText }}</div>
-          </div>
-          <template v-else>
-            {{ url }}
-          </template>
-        </slot>
-      </div>
-      <div class="state" v-bind:class="{ 'status-failed': hasError }"><slot name="state">{{ stateText }}</slot></div>
-    </div>
-  `,
-  };
-
-  function parseHTML(html) {
-    const context = document.implementation.createHTMLDocument();
-
-    // Set the base href for the created document so any parsed elements with URLs
-    // are based on the document's URL
-    const base = context.createElement('base');
-    base.href = document.location.href;
-    context.head.appendChild(base);
-
-    context.body.innerHTML = html;
-
-    return context.body;
-  }
-
-  function tpl(template) {
-    return param => new Function(...Object.keys(param), 'return `' + template + '`')(...Object.values(param));
-  }
-
-  function formatPageNumber(num, length) {
-    let name = String(num);
-
-    for (let len = length - name.length; len > 0; len--) {
-      name = '0' + name;
-    }
-
-    return name;
-  }
-
-  async function* createPromisePool(executors, limit) {
-    const running = [];
-
-    const invoker = executor => {
-      running.push(
-        executor().finally(() => {
-          if (executors.length) {
-            invoker(executors.shift());
-          }
-        })
-      );
-    };
-
-    executors.splice(0, limit).forEach(invoker);
-
-    while (running.length) {
-      yield running.shift();
-    }
-  }
-
-  const HOME_PAGE_URL = location.href;
-  const DOWNLOAD_THREAD_LIMIT = 5;
-
-  function resolveIndexPageUrl(index) {
-    return HOME_PAGE_URL.replace('aid', `page-${index}-aid`);
-  }
-
-  async function requestPage(url, options) {
-    const resp = await fetch(url, options);
-
-    return await resp.text();
-  }
-
-  async function resolvePageUrl(indexPageUrl) {
-    const content = parseHTML(await requestPage(indexPageUrl));
-
-    return [...content.querySelectorAll('#bodywrap .gallary_wrap .gallary_item .pic_box a')].map(link => link.href);
-  }
-
-  async function resolvePage(pageUrl) {
-    console.log(`[CD] 正在解析 ${pageUrl}`);
-
-    const content = parseHTML(await requestPage(pageUrl));
-    const imageUrl = content.querySelector('#photo_body #imgarea #picarea').src;
-    const pageLabels = content.querySelector('.newpagewrap .newpagelabel').innerText.split('/');
-    const fileName = /[^/]+(?!.*\/)/.exec(imageUrl)[0];
-
-    try {
-      return {
-        pageUrl,
-        imageUrl,
-        fileName,
-        index: parseInt(pageLabels[0]),
-        indexName: formatPageNumber(pageLabels[0], pageLabels[1].length) + '.' + /[^.]+(?!.*\.)/.exec(fileName),
-        state: 'pending',
-        total: parseInt(pageLabels[1]),
-      };
-    } finally {
-      console.log(`[CD] 解析 ${pageUrl} 完成`);
-    }
-  }
-
-  async function* resolveAllPage() {
-    const paginations = document.querySelectorAll('.bot_toolbar .paginator > a');
-    const lastPage = parseInt(paginations.item(paginations.length - 1).innerText);
-    const indexPageUrls = [];
-    const pageUrls = [];
-
-    for (let index = 1; index <= lastPage; index++) {
-      indexPageUrls.push(resolveIndexPageUrl(index));
-    }
-
-    for await (const pages of createPromisePool(
-      indexPageUrls.map(url => () => resolvePageUrl(url)),
-      DOWNLOAD_THREAD_LIMIT
-    )) {
-      pageUrls.push(...pages);
-    }
-
-    for await (const page of createPromisePool(
-      pageUrls.map(url => () => resolvePage(url)),
-      DOWNLOAD_THREAD_LIMIT
-    )) {
-      yield page;
-    }
-  }
-
-  var commonjsGlobal = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : {};
-
-  function createCommonjsModule(fn) {
-    var module = { exports: {} };
-  	return fn(module, module.exports), module.exports;
-  }
-
-  var FileSaver_min = createCommonjsModule(function (module, exports) {
-  (function(a,b){b();})(commonjsGlobal,function(){function b(a,b){return "undefined"==typeof b?b={autoBom:!1}:"object"!=typeof b&&(console.warn("Deprecated: Expected third argument to be a object"),b={autoBom:!b}),b.autoBom&&/^\s*(?:text\/\S*|application\/xml|\S*\/\S*\+xml)\s*;.*charset\s*=\s*utf-8/i.test(a.type)?new Blob(["\uFEFF",a],{type:a.type}):a}function c(a,b,c){var d=new XMLHttpRequest;d.open("GET",a),d.responseType="blob",d.onload=function(){g(d.response,b,c);},d.onerror=function(){console.error("could not download file");},d.send();}function d(a){var b=new XMLHttpRequest;b.open("HEAD",a,!1);try{b.send();}catch(a){}return 200<=b.status&&299>=b.status}function e(a){try{a.dispatchEvent(new MouseEvent("click"));}catch(c){var b=document.createEvent("MouseEvents");b.initMouseEvent("click",!0,!0,window,0,0,0,80,20,!1,!1,!1,!1,0,null),a.dispatchEvent(b);}}var f="object"==typeof window&&window.window===window?window:"object"==typeof self&&self.self===self?self:"object"==typeof commonjsGlobal&&commonjsGlobal.global===commonjsGlobal?commonjsGlobal:void 0,a=f.navigator&&/Macintosh/.test(navigator.userAgent)&&/AppleWebKit/.test(navigator.userAgent)&&!/Safari/.test(navigator.userAgent),g=f.saveAs||("object"!=typeof window||window!==f?function(){}:"download"in HTMLAnchorElement.prototype&&!a?function(b,g,h){var i=f.URL||f.webkitURL,j=document.createElement("a");g=g||b.name||"download",j.download=g,j.rel="noopener","string"==typeof b?(j.href=b,j.origin===location.origin?e(j):d(j.href)?c(b,g,h):e(j,j.target="_blank")):(j.href=i.createObjectURL(b),setTimeout(function(){i.revokeObjectURL(j.href);},4E4),setTimeout(function(){e(j);},0));}:"msSaveOrOpenBlob"in navigator?function(f,g,h){if(g=g||f.name||"download","string"!=typeof f)navigator.msSaveOrOpenBlob(b(f,h),g);else if(d(f))c(f,g,h);else {var i=document.createElement("a");i.href=f,i.target="_blank",setTimeout(function(){e(i);});}}:function(b,d,e,g){if(g=g||open("","_blank"),g&&(g.document.title=g.document.body.innerText="downloading..."),"string"==typeof b)return c(b,d,e);var h="application/octet-stream"===b.type,i=/constructor/i.test(f.HTMLElement)||f.safari,j=/CriOS\/[\d]+/.test(navigator.userAgent);if((j||h&&i||a)&&"undefined"!=typeof FileReader){var k=new FileReader;k.onloadend=function(){var a=k.result;a=j?a:a.replace(/^data:[^;]*;/,"data:attachment/file;"),g?g.location.href=a:location=a,g=null;},k.readAsDataURL(b);}else {var l=f.URL||f.webkitURL,m=l.createObjectURL(b);g?g.location=m:location.href=m,g=null,setTimeout(function(){l.revokeObjectURL(m);},4E4);}});f.saveAs=g.saveAs=g,(module.exports=g);});
-
-
-  });
-
-  const textInfoTemplate = tpl(`
-\${title}
-\${url}
-\${labels.join('\\n')}
-标签：\${tags.join(' ')}
-简介：\${introduction}
-
-页面地址：
-\${pages.map(page => page.pageUrl).join('\\n')}
-
-图片地址：
-\${pages.map(page => page.imageUrl).join('\\n')}
-
-文件名映射：
-\${pages.map(page => page.fileName + ' ' + page.indexName).join('\\n')}
-`);
-
-  async function exportUrl(info) {
-    const blob = new Blob([textInfoTemplate(info)], { type: 'text/plain;charset=utf-8' });
-
-    FileSaver_min.saveAs(blob, `${info.title}.info.txt`);
-  }
-
-  async function exportZip(info, onUpdate) {
-    const zip = new JSZip();
-    const folder = zip.folder(info.title);
-
-    for (const page of info.pages) {
-      if (page.buffer) {
-        folder.file(page.indexName, page.buffer);
-      }
-    }
-
-    folder.file('info.txt', new Blob([textInfoTemplate(info)], { type: 'text/plain;charset=utf-8' }));
-
-    const blob = await zip.generateAsync({ type: 'blob' }, onUpdate);
-
-    FileSaver_min.saveAs(blob, `${info.title}.zip`);
-  }
-
-  function downloadImage(imageUrl, { onProgress, ...options }) {
-    return new Promise((resolve, reject) => {
-      let lastProgress = 0;
-      let lastTimestamp = Date.now();
-      let speedText = '0 KB/s';
-
-      GM_xmlhttpRequest({
-        ...options,
-        method: 'GET',
-        url: imageUrl,
-        responseType: 'arraybuffer',
-        timeout: 5 * 60 * 1000,
-        onprogress(res) {
-          const now = Date.now();
-          const speedKBs = res.lengthComputable
-            ? Number((res.loaded - lastProgress) / (now - lastTimestamp) / 1.024)
-            : -1;
-
-          if (now - lastTimestamp >= 1000 || lastProgress === 0) {
-            speedText = res.lengthComputable ? `${speedKBs.toFixed(2)} KB/s` : '';
-            lastProgress = res.loaded;
-            lastTimestamp = now;
-          }
-
-          onProgress({
-            loaded: res.loaded,
-            total: res.total,
-            progress: res.lengthComputable ? res.loaded / res.total : 0,
-            progressText: speedText,
-          });
-        },
-        onload(res) {
-          try {
-            // cache them to reduce waiting time and CPU usage on Chrome with Tampermonkey
-            // (Tampermonkey uses a dirty way to give res.response, transfer string to arraybuffer every time)
-            // now store progress just spent ~1s instead of ~8s
-            var response = res.response;
-            var byteLength = response.byteLength;
-            var responseHeaders = res.responseHeaders;
-
-            // use regex to fixed compatibility with http/2, as its headers are lower case (at least fixed with Yandex Turbo)
-            var mime = responseHeaders.match(/Content-Type:/i)
-              ? responseHeaders
-                  .split(/Content-Type:/i)[1]
-                  .split('\n')[0]
-                  .trim()
-                  .split('/')
-              : ['', ''];
-            var responseText;
-            if (mime[0] === 'text') {
-              responseText = new TextDecoder().decode(new DataView(response));
-            }
-
-            if (!response) {
-              reject(new Error(`[CD] Image ${imageUrl} download fail: Return empty response`));
-              return;
-            }
-            if (byteLength === 925) {
-              // '403 Access Denied' Image Byte Size
-              // GM_xhr only support abort()
-              reject(new Error(`[CD] Image ${imageUrl} download fail: 403 Access Denied`));
-              return;
-            }
-            if (byteLength === 28) {
-              // 'An error has occurred. (403)' Length
-              reject(`[CD] Image ${imageUrl} download fail: An error has occurred. (403)`);
-              return;
-            }
-
-            // res.status should be detected at here, because we should know are we reached image limits at first
-            if (res.status !== 200) {
-              reject(new Error(`[CD] Image ${imageUrl} download fail: Wrong response status (${res.status})`));
-              return;
-            }
-
-            resolve(response);
-          } catch (error) {
-            console.error(error);
-
-            reject(new Error(`[CD] Image ${imageUrl} download fail: Unknown error (Please send feedback)`));
-          }
-        },
-        onerror(res) {
-          reject(new Error(`[CD] Image ${imageUrl} download fail: Network Error`));
-        },
-        ontimeout(res) {
-          reject(new Error(`[CD] Image ${imageUrl} download fail: Timed Out`));
-        },
-      });
-    });
-  }
-
-  var html = "<style>\n  .container {\n    position: fixed;\n    right: 0;\n    bottom: 0;\n    width: 33%;\n    height: 30%;\n    padding: 0.5rem;\n    background: #666;\n    border-top-right-radius: 5px;\n    border-top-left-radius: 5px;\n    border: 1px solid #333;\n    opacity: 98%;\n    color: #eee;\n  }\n\n  .container h4 {\n    margin: 0;\n  }\n\n  .btn-close,\n  .btn-folder {\n    float: right;\n    cursor: pointer;\n    padding: 0 5px;\n  }\n\n  .btn-folder::after {\n    display: inline;\n    content: '▼';\n  }\n\n  .spinner {\n    display: inline;\n  }\n\n  .spinner::after {\n    content: '';\n    display: inline;\n    animation: loading-spinner;\n    animation-duration: 5s;\n    animation-iteration-count: infinite;\n  }\n\n  @keyframes loading-spinner {\n    20% {\n      content: '.';\n    }\n\n    40% {\n      content: '..';\n    }\n\n    60% {\n      content: '...';\n    }\n\n    80% {\n      content: '....';\n    }\n\n    100% {\n      content: '.....';\n    }\n  }\n\n  .list {\n    width: 100%;\n    max-height: calc(100% - 60px);\n    overflow: auto;\n  }\n\n  .list .row {\n    display: flex;\n  }\n\n  .row.header {\n    font-weight: bolder;\n  }\n\n  .row > div {\n    padding: 5px;\n    flex: 1;\n  }\n\n  .row > div.index {\n    width: 40px;\n    text-align: right;\n    flex: 0 1 auto;\n  }\n\n  .row > div.state {\n    width: 60px;\n    flex: 0 1 auto;\n  }\n\n  .progress {\n    height: 14px;\n    overflow: hidden;\n    border: 1px solid #eee;\n  }\n\n  .progress > .progress-bar {\n    float: left;\n    height: 100%;\n    color: #333;\n    text-align: center;\n    background-color: #eee;\n  }\n\n  .toolbar {\n    height: 60px;\n    display: flex;\n    padding-top: 10px;\n  }\n\n  .toolbar > div {\n    flex: 1;\n  }\n\n  .toolbar > .buttons {\n    text-align: right;\n  }\n\n  .status-failed {\n    color: #b60202;\n  }\n\n  .fold .btn-folder::after {\n    content: '▲';\n  }\n\n  .fold.container {\n    height: 15px;\n  }\n\n  .fold .list,\n  .fold .toolbar {\n    display: none;\n  }\n</style>\n\n<div class=\"container\" v-bind:class=\"{ fold }\">\n  <h4>\n    <span v-if=\"title\">{{ title }} | </span>\n    <span> 总页数：{{ pageTotal }} | 正在下载：{{ downloadingCount }} | 失败：{{ failCount }} </span>\n    <span v-if=\"loading\" class=\"spinner\"></span>\n    <a class=\"btn-close\" v-on:click=\"close\">╳</a>\n    <a class=\"btn-folder\" v-on:click=\"toggleFold\"></a>\n  </h4>\n  <hr />\n  <div class=\"list\">\n    <page-item class=\"header\">\n      <template v-slot:index>序号</template>\n      <template v-slot:url>页面</template>\n      <template v-slot:state>状态</template>\n    </page-item>\n    <page-item\n      v-for=\"page in currentPages\"\n      :key=\"page.index\"\n      :state=\"page.state\"\n      :index=\"page.index\"\n      :url=\"page.pageUrl\"\n      :progress=\"page.progress\"\n      :progress-text=\"page.progressText\"\n    />\n  </div>\n  <div v-if=\"resolved\" class=\"toolbar\">\n    <div class=\"download-status\"></div>\n    <div class=\"buttons\">\n      <button class=\"btn-export-url\" v-on:click=\"exportPage('txt')\">导出 URL</button>\n      <button class=\"btn-export-zip\" v-bind:disabled=\"exporting\" v-on:click=\"exportPage('zip')\">导出 ZIP</button>\n    </div>\n  </div>\n</div>\n";
-
-  const DOWNLOAD_THREAD_LIMIT$1 = 5;
-
-  function DownloadBox(el) {
-    let canceled = false;
-
-    const comicInfo = {
-      finishedAt: null,
-      introduction: document.querySelector('.asTBcell.uwconn > p').innerText.substring(3),
-      labels: [...document.querySelectorAll('.asTBcell.uwconn > label')].map(node => node.innerText.trim()),
-      startedAt: new Date(),
-      tags: [...document.querySelectorAll('.asTBcell.uwconn .addtags .tagshow')].map(node => node.innerText.trim()),
-      title: document.querySelector('.userwrap h2').innerText,
-      url: location.href,
-    };
-
-    return new Vue({
-      el,
-      data: {
-        downloadingCount: 0,
-        exporting: false,
-        fold: false,
-        failCount: 0,
-        loading: false,
-        pages: [],
-        pageTotal: 0,
-        resolved: false,
-        successCount: 0,
-        title: null,
-      },
-
-      components: {
-        'page-item': PageItem,
-      },
-
-      created() {
-        this.startDownload();
-      },
-
-      beforeDestroy() {
-        canceled = true;
-      },
-
-      computed: {
-        currentPages() {
-          return this.pages.filter(Boolean);
-        },
-      },
-
-      methods: {
-        async startDownload() {
-          this.loading = true;
-
-          console.log(`[CD] 开始解析 ${comicInfo.title}`);
-
-          for await (const page of resolveAllPage()) {
-            if (canceled) {
-              return;
-            }
-
-            if (!this.pageTotal) {
-              this.pageTotal = page.total;
-            }
-
-            const length = this.pages.push(page);
-
-            this.title = `已解析：${length}`;
-            this.updatePage(page);
-          }
-
-          console.log(`[CD] 解析 ${comicInfo.title} 完毕`);
-
-          this.resolved = true;
-
-          await this.downloadAllPage();
-
-          this.loading = false;
-          this.title = null;
-        },
-
-        updatePage(page) {
-          this.pages.splice(page.index - 1, 1, page);
-
-          if (page.state === 'downloading') {
-            this.$nextTick(() => {
-              const loadingPage = this.$el.querySelector('.row.downloading');
-
-              if (loadingPage) {
-                loadingPage.scrollIntoView();
-              }
-            });
-          }
-        },
-
-        async downloadAllPage() {
-          const executors = this.pages
-            .filter(page => page.state !== 'downloaded')
-            .map(page => () => this.downloadPage(page));
-
-          for await (const page of createPromisePool(executors, DOWNLOAD_THREAD_LIMIT$1)) {
-            if (canceled) {
-              return;
-            }
-            this.successCount++;
-            this.title = `已下载：${this.successCount}`;
-
-            this.updatePage(page);
-          }
-
-          if (this.successCount === this.pages.length && this.pages.every(ele => ele.buffer)) {
-            this.finishedAt = comicInfo.finishedAt = new Date();
-            await this.exportPage('zip');
-          } else if (
-            this.successCount + this.failCount >= this.pages.length &&
-            this.failCount > 0 &&
-            confirm('下载未全部完成，是否重试？')
-          ) {
-            return this.downloadAllPage();
-          }
-        },
-
-        async downloadPage(page) {
-          if (page.state === 'error') {
-            this.failCount--;
-          }
-
-          this.updatePage({ ...page, state: 'downloading' });
-
-          this.downloadingCount++;
-
-          try {
-            const buffer = await downloadImage(page.imageUrl, {
-              onProgress: info => this.updatePage({ ...page, ...info, state: 'downloading' }),
-              headers: { Referer: page.pageUrl, 'X-Alt-Referer': page.pageUrl, Cookie: document.cookie },
-            });
-
-            return { ...page, buffer, state: 'downloaded' };
-          } catch (error) {
-            this.failCount++;
-            this.updatePage({ ...page, error, state: 'error' });
-          } finally {
-            this.downloadingCount--;
-          }
-        },
-
-        async exportPage(type) {
-          const info = { ...comicInfo, pages: this.pages };
-
-          this.exporting = true;
-
-          if (type === 'zip') {
-            await exportZip(info, ({ percent, currentFile }) => {
-              if (currentFile) {
-                const fileName = currentFile.substring(currentFile.lastIndexOf('/') + 1);
-                this.title = `正在导出：${fileName} | ${percent.toFixed(2)}%`;
-              }
-            });
-          } else if (type === 'txt') {
-            await exportUrl(info);
-          }
-
-          this.exporting = false;
-        },
-
-        close() {
-          document.getElementById('download-box-container').remove();
-        },
-
-        toggleFold() {
-          this.fold = !this.fold;
-        },
-      },
-    });
-  }
-
-  customElements.define(
-    'download-box',
-    class extends HTMLElement {
-      constructor() {
-        super();
-
-        this.attachShadow({ mode: 'open' });
-        this.shadowRoot.innerHTML = html;
-      }
-
-      connectedCallback() {
-        this.vm = DownloadBox(this.shadowRoot.querySelector('.container'));
-      }
-
-      disconnectedCallback() {
-        this.vm.$destroy();
-      }
-    }
-  );
-
-  customElements.define(
-    'download-button',
-    class extends HTMLAnchorElement {
-      constructor() {
-        super();
-
-        this.addEventListener('click', this.download);
-      }
-
-      connectedCallback() {
-        this.className = 'btn';
-        this.style = 'width: 130px';
-        this.innerText = '打包下载漫画';
-      }
-
-      download(event) {
-        event.preventDefault();
-        const box = document.getElementById('download-box');
-
-        if (box && confirm('正在下载中，是否重新下载？')) {
-          box.remove();
-        }
-
-        document.body.insertAdjacentHTML('beforeend', `<download-box id="download-box"></download-box>`);
-      }
-    },
-    { extends: 'a' }
-  );
-
-  const panel = document.querySelector('.asTBcell.uwthumb');
-
-  panel.appendChild(document.createElement('a', { is: 'download-button' }));
-
-}());
+!function(){"use strict";function e(){}function t(e){return e()}function n(){return Object.create(null)}function o(e){e.forEach(t)}function r(e){return"function"==typeof e}function l(e,t){return e!=e?t==t:e!==t||e&&"object"==typeof e||"function"==typeof e}function s(t,n,o){t.$$.on_destroy.push(function(t,...n){if(null==t)return e;const o=t.subscribe(...n);return o.unsubscribe?()=>o.unsubscribe():o}(n,o))}function i(e,t,n,o){if(e){const r=a(e,t,n,o);return e[0](r)}}function a(e,t,n,o){return e[1]&&o?function(e,t){
+// @ts-ignore
+for(const n in t)e[n]=t[n];return e}(n.ctx.slice(),e[1](o(t))):n.ctx}function c(e,t,n,o,r,l,s){const i=function(e,t,n,o){if(e[2]&&o){const r=e[2](o(n));if(void 0===t.dirty)return r;if("object"==typeof r){const e=[],n=Math.max(t.dirty.length,r.length);for(let o=0;o<n;o+=1)e[o]=t.dirty[o]|r[o];return e}return t.dirty|r}return t.dirty}(t,o,r,l);if(i){const r=a(t,n,o,s);e.p(r,i)}}function d(e,t){e.appendChild(t)}function u(e,t,n){e.insertBefore(t,n||null)}function f(e){e.parentNode.removeChild(e)}function p(e){return document.createElement(e)}function g(e){return document.createTextNode(e)}function h(){return g(" ")}function m(){return g("")}function b(e,t,n,o){return e.addEventListener(t,n,o),()=>e.removeEventListener(t,n,o)}function v(e,t,n){null==n?e.removeAttribute(t):e.getAttribute(t)!==n&&e.setAttribute(t,n)}function y(e,t){t=""+t,e.wholeText!==t&&(e.data=t)}function w(e,t,n){e.classList[n?"add":"remove"](t)}let x;function $(e){x=e}function C(){if(!x)throw new Error("Function called outside component initialization");return x}const T=[],E=[],k=[],z=[],_=Promise.resolve();let j=!1;function A(){j||(j=!0,_.then(L))}function O(e){k.push(e)}let S=!1;const D=new Set;function L(){if(!S){S=!0;do{
+// first, call beforeUpdate functions
+// and update components
+for(let e=0;e<T.length;e+=1){const t=T[e];$(t),B(t.$$)}for($(null),T.length=0;E.length;)E.pop()();
+// then, once components are updated, call
+// afterUpdate functions. This may cause
+// subsequent updates...
+for(let e=0;e<k.length;e+=1){const t=k[e];D.has(t)||(
+// ...so guard against infinite loops
+D.add(t),t())}k.length=0}while(T.length);for(;z.length;)z.pop()();j=!1,S=!1,D.clear()}}function B(e){if(null!==e.fragment){e.update(),o(e.before_update);const t=e.dirty;e.dirty=[-1],e.fragment&&e.fragment.p(e.ctx,t),e.after_update.forEach(O)}}const I=new Set;let R;function U(){R={r:0,c:[],p:R}}function M(){R.r||o(R.c),R=R.p}function P(e,t){e&&e.i&&(I.delete(e),e.i(t))}function q(e,t,n,o){if(e&&e.o){if(I.has(e))return;I.add(e),R.c.push((()=>{I.delete(e),o&&(n&&e.d(1),o())})),e.o(t)}}const N="undefined"!=typeof window?window:"undefined"!=typeof globalThis?globalThis:global;function F(e,t){q(e,1,1,(()=>{t.delete(e.key)}))}function H(e){e&&e.c()}function G(e,n,l,s){const{fragment:i,on_mount:a,on_destroy:c,after_update:d}=e.$$;i&&i.m(n,l),s||
+// onMount happens before the initial afterUpdate
+O((()=>{const n=a.map(t).filter(r);c?c.push(...n):
+// Edge case - component was destroyed immediately,
+// most likely as a result of a binding initialising
+o(n),e.$$.on_mount=[]})),d.forEach(O)}function K(e,t){const n=e.$$;null!==n.fragment&&(o(n.on_destroy),n.fragment&&n.fragment.d(t),
+// TODO null out other refs, including component.$$ (but need to
+// preserve final state?)
+n.on_destroy=n.fragment=null,n.ctx=[])}function V(t,r,l,s,i,a,c=[-1]){const d=x;$(t);const u=t.$$={fragment:null,ctx:null,
+// state
+props:a,update:e,not_equal:i,bound:n(),
+// lifecycle
+on_mount:[],on_destroy:[],on_disconnect:[],before_update:[],after_update:[],context:new Map(d?d.$$.context:[]),
+// everything else
+callbacks:n(),dirty:c,skip_bound:!1};let p=!1;if(u.ctx=l?l(t,r.props||{},((e,n,...o)=>{const r=o.length?o[0]:n;return u.ctx&&i(u.ctx[e],u.ctx[e]=r)&&(!u.skip_bound&&u.bound[e]&&u.bound[e](r),p&&function(e,t){-1===e.$$.dirty[0]&&(T.push(e),A(),e.$$.dirty.fill(0)),e.$$.dirty[t/31|0]|=1<<t%31}(t,e)),n})):[],u.update(),p=!0,o(u.before_update),
+// `false` as a special case of no DOM component
+u.fragment=!!s&&s(u.ctx),r.target){if(r.hydrate){const e=function(e){return Array.from(e.childNodes)}(r.target);
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+u.fragment&&u.fragment.l(e),e.forEach(f)}else
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+u.fragment&&u.fragment.c();r.intro&&P(t.$$.fragment),G(t,r.target,r.anchor,r.customElement),L()}$(d)}
+/**
+     * Base class for Svelte components. Used when dev=false.
+     */class X{$destroy(){K(this,1),this.$destroy=e}$on(e,t){const n=this.$$.callbacks[e]||(this.$$.callbacks[e]=[]);return n.push(t),()=>{const e=n.indexOf(t);-1!==e&&n.splice(e,1)}}$set(e){var t;this.$$set&&(t=e,0!==Object.keys(t).length)&&(this.$$.skip_bound=!0,this.$$set(e),this.$$.skip_bound=!1)}}const W=[];
+/**
+     * Create a `Writable` store that allows both updating and reading by subscription.
+     * @param {*=}value initial value
+     * @param {StartStopNotifier=}start start and stop notifications for subscriptions
+     */const{subscribe:Z,update:J}=function(t,n=e){let o;const r=[];function s(e){if(l(t,e)&&(t=e,o)){// store is ready
+const e=!W.length;for(let e=0;e<r.length;e+=1){const n=r[e];n[1](),W.push(n,t)}if(e){for(let e=0;e<W.length;e+=2)W[e][0](W[e+1]);W.length=0}}}return{set:s,update:function(e){s(e(t))},subscribe:function(l,i=e){const a=[l,i];return r.push(a),1===r.length&&(o=n(s)||e),l(t),()=>{const e=r.indexOf(a);-1!==e&&r.splice(e,1),0===r.length&&(o(),o=null)}}}}({description:null,downloadingCount:0,exporting:!1,fold:!1,failCount:0,loading:!1,pages:[],pageTotal:0,resolved:!1,successCount:0,title:null}),Q={subscribe:Z,addPage(e){J((t=>({...t,pages:t.pages.concat([e])})))},setDescription(e){J((t=>({...t,description:e})))},setExporting(e){J((t=>({...t,exporting:e})))},setFold(e){J((t=>({...t,fold:e})))},setLoading(e){J((t=>({...t,loading:e})))},setPageTotal(e){J((t=>({...t,pageTotal:e})))},setResolved(e){J((t=>({...t,resolved:e})))},setTitle(e){J((t=>({...t,title:e})))},updatePage(e){J((t=>{const[n]=t.pages.splice(e.index-1,1,e);return!n.error&&e.error?t.failCount++:n.error&&!e.error&&t.failCount--,"downloading"!==n.state&&"downloading"===e.state?t.downloadingCount++:"downloading"===n.state&&"downloading"!==e.state&&t.downloadingCount--,"downloaded"===e.state&&t.successCount++,{...t}}))}};function Y(e){const t=document.implementation.createHTMLDocument(),n=t.createElement("base");
+// Set the base href for the created document so any parsed elements with URLs
+// are based on the document's URL
+return n.href=document.location.href,t.head.appendChild(n),t.body.innerHTML=e,t.body}function ee(e,t){let n=String(e);for(let e=t-n.length;e>0;e--)n="0"+n;return n}async function*te(e,t){const n=[],o=t=>{n.push(t().finally((()=>{e.length&&o(e.shift())})))};for(e.splice(0,t).forEach(o);n.length;)yield n.shift()}const ne=location.href;function oe(e){return ne.replace("aid",`page-${e}-aid`)}async function re(e,t){const n=await fetch(e,t);return await n.text()}async function*le(){const e=document.querySelectorAll(".bot_toolbar .paginator > a"),t=parseInt(e.item(e.length-1)?.innerText||"1"),n=[],o=[];for(let e=1;e<=t;e++)n.push(oe(e));for await(const e of te(n.map((e=>()=>async function(e){return[...Y(await re(e)).querySelectorAll("#bodywrap .gallary_wrap .gallary_item .pic_box a")].map((e=>e.href))}(e))),5))o.push(...e);for await(const e of te(o.map((e=>()=>async function(e){console.log(`[CD] 正在解析 ${e}`);const t=Y(await re(e)),n=t.querySelector("#photo_body #imgarea #picarea").src,o=t.querySelector(".newpagewrap .newpagelabel").innerText.split("/"),r=/[^/]+(?!.*\/)/.exec(n)[0];try{return{pageUrl:e,imageUrl:n,fileName:r,index:parseInt(o[0]),indexName:ee(o[0],o[1].length)+"."+/[^.]+(?!.*\.)/.exec(r),state:"pending",total:parseInt(o[1])}}finally{console.log(`[CD] 解析 ${e} 完成`)}}(e))),5))yield e}var se="undefined"!=typeof globalThis?globalThis:"undefined"!=typeof window?window:"undefined"!=typeof global?global:"undefined"!=typeof self?self:{};var ie,ae=(function(e,t){!function(){function t(e,t){return void 0===t?t={autoBom:!1}:"object"!=typeof t&&(console.warn("Deprecated: Expected third argument to be a object"),t={autoBom:!t}),t.autoBom&&/^\s*(?:text\/\S*|application\/xml|\S*\/\S*\+xml)\s*;.*charset\s*=\s*utf-8/i.test(e.type)?new Blob(["\ufeff",e],{type:e.type}):e}function n(e,t,n){var o=new XMLHttpRequest;o.open("GET",e),o.responseType="blob",o.onload=function(){i(o.response,t,n)},o.onerror=function(){console.error("could not download file")},o.send()}function o(e){var t=new XMLHttpRequest;t.open("HEAD",e,!1);try{t.send()}catch(e){}return 200<=t.status&&299>=t.status}function r(e){try{e.dispatchEvent(new MouseEvent("click"))}catch(n){var t=document.createEvent("MouseEvents");t.initMouseEvent("click",!0,!0,window,0,0,0,80,20,!1,!1,!1,!1,0,null),e.dispatchEvent(t)}}var l="object"==typeof window&&window.window===window?window:"object"==typeof self&&self.self===self?self:"object"==typeof se&&se.global===se?se:void 0,s=l.navigator&&/Macintosh/.test(navigator.userAgent)&&/AppleWebKit/.test(navigator.userAgent)&&!/Safari/.test(navigator.userAgent),i=l.saveAs||("object"!=typeof window||window!==l?function(){}:"download"in HTMLAnchorElement.prototype&&!s?function(e,t,s){var i=l.URL||l.webkitURL,a=document.createElement("a");t=t||e.name||"download",a.download=t,a.rel="noopener","string"==typeof e?(a.href=e,a.origin===location.origin?r(a):o(a.href)?n(e,t,s):r(a,a.target="_blank")):(a.href=i.createObjectURL(e),setTimeout((function(){i.revokeObjectURL(a.href)}),4e4),setTimeout((function(){r(a)}),0))}:"msSaveOrOpenBlob"in navigator?function(e,l,s){if(l=l||e.name||"download","string"!=typeof e)navigator.msSaveOrOpenBlob(t(e,s),l);else if(o(e))n(e,l,s);else{var i=document.createElement("a");i.href=e,i.target="_blank",setTimeout((function(){r(i)}))}}:function(e,t,o,r){if((r=r||open("","_blank"))&&(r.document.title=r.document.body.innerText="downloading..."),"string"==typeof e)return n(e,t,o);var i="application/octet-stream"===e.type,a=/constructor/i.test(l.HTMLElement)||l.safari,c=/CriOS\/[\d]+/.test(navigator.userAgent);if((c||i&&a||s)&&"undefined"!=typeof FileReader){var d=new FileReader;d.onloadend=function(){var e=d.result;e=c?e:e.replace(/^data:[^;]*;/,"data:attachment/file;"),r?r.location.href=e:location=e,r=null},d.readAsDataURL(e)}else{var u=l.URL||l.webkitURL,f=u.createObjectURL(e);r?r.location=f:location.href=f,r=null,setTimeout((function(){u.revokeObjectURL(f)}),4e4)}});l.saveAs=i.saveAs=i,e.exports=i}()}(ie={exports:{}},ie.exports),ie.exports);const ce=(de="\n${title}\n${url}\n${labels.join('\\n')}\n标签：${tags.join(' ')}\n简介：${introduction}\n\n页面地址：\n${pages.map(page => page.pageUrl).join('\\n')}\n\n图片地址：\n${pages.map(page => page.imageUrl).join('\\n')}\n\n文件名映射：\n${pages.map(page => page.fileName + ' ' + page.indexName).join('\\n')}\n",e=>new Function(...Object.keys(e),"return `"+de+"`")(...Object.values(e)));var de;const ue=e=>({}),fe=e=>({}),pe=e=>({}),ge=e=>({}),he=e=>({}),me=e=>({})
+// (16:40) {page.index};
+// (25:6) {:else}
+function be(e){let t,n=/*page*/e[0].pageUrl+"";return{c(){t=g(n)},m(e,n){u(e,t,n)},p(e,o){/*page*/1&o&&n!==(n=/*page*/e[0].pageUrl+"")&&y(t,n)},d(e){e&&f(t)}}}
+// (19:6) {#if isDownloading}
+function ve(e){let t,n,o,r,l=/*page*/(e[0].meta?.progressText||"")+"";return{c(){t=p("div"),n=p("div"),o=g(l),v(n,"class","progress-bar svelte-19g375"),v(n,"style",r="width: "+/*page*/100*(e[0].meta?.progress||0)),v(t,"class","progress svelte-19g375")},m(e,r){u(e,t,r),d(t,n),d(n,o)},p(e,t){/*page*/1&t&&l!==(l=/*page*/(e[0].meta?.progressText||"")+"")&&y(o,l),/*page*/1&t&&r!==(r="width: "+/*page*/100*(e[0].meta?.progress||0))&&v(n,"style",r)},d(e){e&&f(t)}}}
+// (18:21)        
+function ye(e){let t,n,o,r,l,s,a;const b=/*#slots*/e[3].index,x=i(b,e,/*$$scope*/e[2],me),$=x||function(e){let t,n=/*page*/e[0].index+"";return{c(){t=g(n)},m(e,n){u(e,t,n)},p(e,o){/*page*/1&o&&n!==(n=/*page*/e[0].index+"")&&y(t,n)},d(e){e&&f(t)}}}(e),C=/*#slots*/e[3].url,T=i(C,e,/*$$scope*/e[2],ge),E=T||function(e){let t;function n(e,t){/*isDownloading*/
+return e[1]?ve:be}let o=n(e),r=o(e);return{c(){r.c(),t=m()},m(e,n){r.m(e,n),u(e,t,n)},p(e,l){o===(o=n(e))&&r?r.p(e,l):(r.d(1),r=o(e),r&&(r.c(),r.m(t.parentNode,t)))},d(e){r.d(e),e&&f(t)}}}
+// (31:23) {STATE_MAP[page.state]}
+(e),k=/*#slots*/e[3].state,z=i(k,e,/*$$scope*/e[2],fe),_=z||function(e){let t,n=we[/*page*/e[0].state]+"";return{c(){t=g(n)},m(e,n){u(e,t,n)},p(e,o){/*page*/1&o&&n!==(n=we[/*page*/e[0].state]+"")&&y(t,n)},d(e){e&&f(t)}}}(e);return{c(){t=p("div"),n=p("div"),$&&$.c(),o=h(),r=p("div"),E&&E.c(),l=h(),s=p("div"),_&&_.c(),v(n,"class","index svelte-19g375"),v(r,"class","svelte-19g375"),v(s,"class","state svelte-19g375"),w(s,"status-failed",/*page*/"error"===e[0]?.state),v(t,"class","row svelte-19g375"),w(t,"downloading",/*isDownloading*/e[1])},m(e,i){u(e,t,i),d(t,n),$&&$.m(n,null),d(t,o),d(t,r),E&&E.m(r,null),d(t,l),d(t,s),_&&_.m(s,null),a=!0},p(e,[n]){x?x.p&&/*$$scope*/4&n&&c(x,b,e,/*$$scope*/e[2],n,he,me):$&&$.p&&/*page*/1&n&&$.p(e,n),T?T.p&&/*$$scope*/4&n&&c(T,C,e,/*$$scope*/e[2],n,pe,ge):E&&E.p&&/*page, isDownloading*/3&n&&E.p(e,n),z?z.p&&/*$$scope*/4&n&&c(z,k,e,/*$$scope*/e[2],n,ue,fe):_&&_.p&&/*page*/1&n&&_.p(e,n),/*page*/1&n&&w(s,"status-failed",/*page*/"error"===e[0]?.state),/*isDownloading*/2&n&&w(t,"downloading",/*isDownloading*/e[1])},i(e){a||(P($,e),P(E,e),P(_,e),a=!0)},o(e){q($,e),q(E,e),q(_,e),a=!1},d(e){e&&f(t),$&&$.d(e),E&&E.d(e),_&&_.d(e)}}}const we={error:"下载失败",pending:"准备下载",downloading:"下载中",downloaded:"已下载"};function xe(e,t,n){let o,{$$slots:r={},$$scope:l}=t,{page:s=null}=t;return e.$$set=e=>{"page"in e&&n(0,s=e.page),"$$scope"in e&&n(2,l=e.$$scope)},e.$$.update=()=>{/*page*/1&e.$$.dirty&&n(1,o="downloading"===(null==s?void 0:s.state))},[s,o,l,r]}class $e extends X{constructor(e){
+/* src\components\PageItem.svelte generated by Svelte v3.35.0 */
+var t;super(),document.getElementById("svelte-19g375-style")||((t=p("style")).id="svelte-19g375-style",t.textContent=".row.svelte-19g375.svelte-19g375{display:flex}.row.svelte-19g375>div.svelte-19g375{padding:5px;flex:1}.row.svelte-19g375>div.index.svelte-19g375{width:40px;text-align:right;flex:0 1 auto}.row.svelte-19g375>div.state.svelte-19g375{width:60px;flex:0 1 auto}.progress.svelte-19g375.svelte-19g375{height:14px;overflow:hidden;border:1px solid #eee}.progress.svelte-19g375>.progress-bar.svelte-19g375{float:left;height:100%;color:#333;text-align:center;background-color:#eee}",d(document.head,t)),V(this,e,xe,ye,l,{page:0})}}
+/* src\components\PageList.svelte generated by Svelte v3.35.0 */function Ce(e,t,n){const o=e.slice();return o[1]=t[n],o}
+// (8:4) 
+function Te(e){let t;return{c(){t=p("span"),t.textContent="序号",v(t,"slot","index")},m(e,n){u(e,t,n)},d(e){e&&f(t)}}}
+// (9:4) 
+function Ee(e){let t;return{c(){t=p("span"),t.textContent="页面",v(t,"slot","url")},m(e,n){u(e,t,n)},d(e){e&&f(t)}}}
+// (10:4) 
+function ke(e){let t;return{c(){t=p("span"),t.textContent="状态",v(t,"slot","state")},m(e,n){u(e,t,n)},d(e){e&&f(t)}}}
+// (12:2) {#each data as page (page.index)}
+function ze(e,t){let n,o,r;return o=new $e({props:{page:/*page*/t[1]}}),{key:e,first:null,c(){n=m(),H(o.$$.fragment),this.first=n},m(e,t){u(e,n,t),G(o,e,t),r=!0},p(e,n){t=e;const r={};/*data*/1&n&&(r.page=/*page*/t[1]),o.$set(r)},i(e){r||(P(o.$$.fragment,e),r=!0)},o(e){q(o.$$.fragment,e),r=!1},d(e){e&&f(n),K(o,e)}}}function _e(e){let t,n,o,r,l=[],s=new Map;n=new $e({props:{$$slots:{state:[ke],url:[Ee],index:[Te]},$$scope:{ctx:e}}});let i=/*data*/e[0];const a=e=>/*page*/e[1].index;for(let t=0;t<i.length;t+=1){let n=Ce(e,i,t),o=a(n);s.set(o,l[t]=ze(o,n))}return{c(){t=p("div"),H(n.$$.fragment),o=h();for(let e=0;e<l.length;e+=1)l[e].c();v(t,"class","list svelte-1rt5daf")},m(e,s){u(e,t,s),G(n,t,null),d(t,o);for(let e=0;e<l.length;e+=1)l[e].m(t,null);r=!0},p(e,[o]){const r={};/*$$scope*/16&o&&(r.$$scope={dirty:o,ctx:e}),n.$set(r),/*data*/1&o&&(i=/*data*/e[0],U(),l=function(e,t,n,o,r,l,s,i,a,c,d,u){let f=e.length,p=l.length,g=f;const h={};for(;g--;)h[e[g].key]=g;const m=[],b=new Map,v=new Map;for(g=p;g--;){const e=u(r,l,g),i=n(e);let a=s.get(i);a?o&&a.p(e,t):(a=c(i,e),a.c()),b.set(i,m[g]=a),i in h&&v.set(i,Math.abs(g-h[i]))}const y=new Set,w=new Set;function x(e){P(e,1),e.m(i,d),s.set(e.key,e),d=e.first,p--}for(;f&&p;){const t=m[p-1],n=e[f-1],o=t.key,r=n.key;t===n?(
+// do nothing
+d=t.first,f--,p--):b.has(r)?!s.has(o)||y.has(o)?x(t):w.has(r)?f--:v.get(o)>v.get(r)?(w.add(o),x(t)):(y.add(r),f--):(
+// remove old block
+a(n,s),f--)}for(;f--;){const t=e[f];b.has(t.key)||a(t,s)}for(;p;)x(m[p-1]);return m}(l,o,a,1,e,i,s,t,F,ze,null,Ce),M())},i(e){if(!r){P(n.$$.fragment,e);for(let e=0;e<i.length;e+=1)P(l[e]);r=!0}},o(e){q(n.$$.fragment,e);for(let e=0;e<l.length;e+=1)q(l[e]);r=!1},d(e){e&&f(t),K(n);for(let e=0;e<l.length;e+=1)l[e].d()}}}function je(e,t,n){let{data:o}=t;return e.$$set=e=>{"data"in e&&n(0,o=e.data)},[o]}class Ae extends X{constructor(e){var t;super(),document.getElementById("svelte-1rt5daf-style")||((t=p("style")).id="svelte-1rt5daf-style",t.textContent=".list.svelte-1rt5daf{width:100%;max-height:calc(100% - 65px);overflow:auto}",d(document.head,t)),V(this,e,je,_e,l,{data:0})}}
+/* src\components\DownloadBox.svelte generated by Svelte v3.35.0 */const{document:Oe}=N;
+// (152:4) {#if $state.title}
+function Se(e){let t,n,o,r=/*$state*/e[2].title+"";return{c(){t=p("span"),n=g(r),o=g(" |")},m(e,r){u(e,t,r),d(t,n),d(t,o)},p(e,t){/*$state*/4&t&&r!==(r=/*$state*/e[2].title+"")&&y(n,r)},d(e){e&&f(t)}}}
+// (156:4) {#if $state.loading}
+function De(e){let t;return{c(){t=p("span"),v(t,"class","spinner svelte-cz9b99")},m(e,n){u(e,t,n)},d(e){e&&f(t)}}}
+// (162:2) {#if !$state.fold}
+function Le(e){let t,n,o,r;return o=new Ae({props:{data:/*$state*/e[2].pages}}),{c(){t=p("hr"),n=h(),H(o.$$.fragment)},m(e,l){u(e,t,l),u(e,n,l),G(o,e,l),r=!0},p(e,t){const n={};/*$state*/4&t&&(n.data=/*$state*/e[2].pages),o.$set(n)},i(e){r||(P(o.$$.fragment,e),r=!0)},o(e){q(o.$$.fragment,e),r=!1},d(e){e&&f(t),e&&f(n),K(o,e)}}}
+// (166:2) {#if !$state.fold && $state.resolved}
+function Be(e){let t,n,r,l,s,i,a,c,m,y,w;return{c(){t=p("div"),n=p("div"),r=h(),l=p("div"),s=p("button"),s.textContent="导出 URL",i=h(),a=p("button"),c=g("导出 ZIP"),v(n,"class","download-status svelte-cz9b99"),v(s,"class","btn-export-url"),v(a,"class","btn-export-zip"),a.disabled=m=/*$state*/e[2].exporting,v(l,"class","buttons svelte-cz9b99"),v(t,"class","toolbar svelte-cz9b99")},m(o,f){u(o,t,f),d(t,n),d(t,r),d(t,l),d(l,s),d(l,i),d(l,a),d(a,c),y||(w=[b(s,"click",/*handleExportPage*/e[4]("txt")),b(a,"click",/*handleExportPage*/e[4]("zip"))],y=!0)},p(e,t){/*$state*/4&t&&m!==(m=/*$state*/e[2].exporting)&&(a.disabled=m)},d(e){e&&f(t),y=!1,o(w)}}}function Ie(e){let t,n,l,s,i,a,c,m,x,$,C,T,E,k,z,_,j,A,O,S,D=/*$state*/e[2].pageTotal+"",L=/*$state*/e[2].downloadingCount+"",B=/*$state*/e[2].failCount+"",I=/*$state*/e[2].title&&Se(e),R=/*$state*/e[2].loading&&De(),N=!/*$state*/e[2].fold&&Le(e),F=!/*$state*/e[2].fold&&/*$state*/e[2].resolved&&Be(e);return{c(){t=p("div"),n=p("h4"),I&&I.c(),l=h(),s=p("span"),i=g("总页数："),a=g(D),c=g(" | 正在下载："),m=g(L),x=g(" | 失败："),$=g(B),C=h(),R&&R.c(),T=h(),E=p("button"),E.textContent="╳",k=h(),z=p("button"),_=h(),N&&N.c(),j=h(),F&&F.c(),v(E,"class","btn-close svelte-cz9b99"),v(z,"class","btn-folder svelte-cz9b99"),v(t,"class","container svelte-cz9b99"),w(t,"fold",/*$state*/e[2].fold)},m(o,f){u(o,t,f),d(t,n),I&&I.m(n,null),d(n,l),d(n,s),d(s,i),d(s,a),d(s,c),d(s,m),d(s,x),d(s,$),d(n,C),R&&R.m(n,null),d(n,T),d(n,E),d(n,k),d(n,z),d(t,_),N&&N.m(t,null),d(t,j),F&&F.m(t,null)
+/*div_binding*/,e[5](t),A=!0,O||(S=[b(E,"click",(function(){r(/*onClose*/e[0])&&/*onClose*/e[0].apply(this,arguments)})),b(z,"click",/*handleToggleFold*/e[3])],O=!0)},p(o,[r]){/*$state*/(e=o)[2].title?I?I.p(e,r):(I=Se(e),I.c(),I.m(n,l)):I&&(I.d(1),I=null),(!A||/*$state*/4&r)&&D!==(D=/*$state*/e[2].pageTotal+"")&&y(a,D),(!A||/*$state*/4&r)&&L!==(L=/*$state*/e[2].downloadingCount+"")&&y(m,L),(!A||/*$state*/4&r)&&B!==(B=/*$state*/e[2].failCount+"")&&y($,B),/*$state*/e[2].loading?R||(R=De(),R.c(),R.m(n,T)):R&&(R.d(1),R=null),/*$state*/e[2].fold?N&&(U(),q(N,1,1,(()=>{N=null})),M()):N?(N.p(e,r),/*$state*/4&r&&P(N,1)):(N=Le(e),N.c(),P(N,1),N.m(t,j)),!/*$state*/e[2].fold&&/*$state*/e[2].resolved?F?F.p(e,r):(F=Be(e),F.c(),F.m(t,null)):F&&(F.d(1),F=null),/*$state*/4&r&&w(t,"fold",/*$state*/e[2].fold)},i(e){A||(P(N),A=!0)},o(e){q(N),A=!1},d(n){n&&f(t),I&&I.d(),R&&R.d(),N&&N.d(),F&&F.d()
+/*div_binding*/,e[5](null),O=!1,o(S)}}}function Re(e,t,n){let o;s(e,Q,(e=>n(2,o=e)));var r=this&&this.__awaiter||function(e,t,n,o){return new(n||(n=Promise))((function(r,l){function s(e){try{a(o.next(e))}catch(e){l(e)}}function i(e){try{a(o.throw(e))}catch(e){l(e)}}function a(e){var t;e.done?r(e.value):(t=e.value,t instanceof n?t:new n((function(e){e(t)}))).then(s,i)}a((o=o.apply(e,t||[])).next())}))},l=this&&this.__asyncValues||function(e){if(!Symbol.asyncIterator)throw new TypeError("Symbol.asyncIterator is not defined.");var t,n=e[Symbol.asyncIterator];return n?n.call(e):(e="function"==typeof __values?__values(e):e[Symbol.iterator](),t={},o("next"),o("throw"),o("return"),t[Symbol.asyncIterator]=function(){return this},t);function o(n){t[n]=e[n]&&function(t){return new Promise((function(o,r){(function(e,t,n,o){Promise.resolve(o).then((function(t){e({value:t,done:n})}),t)})(o,r,(t=e[n](t)).done,t.value)}))}}};let{onClose:i}=t,a=!1,c=null;function d(e){return()=>r(this,void 0,void 0,(function*(){const t=Object.assign(Object.assign({},o.description),{pages:o.pages});Q.setExporting(!0),"zip"===e?yield async function(e,t){const n=new JSZip,o=n.folder(e.title);for(const t of e.pages)t.buffer&&o.file(t.indexName,t.buffer);o.file("info.txt",new Blob([ce(e)],{type:"text/plain;charset=utf-8"}));const r=await n.generateAsync({type:"blob"},t);ae.saveAs(r,`${e.title}.zip`)}(t,(({percent:e,currentFile:t})=>{if(t){const n=t.substring(t.lastIndexOf("/")+1);Q.setTitle(`正在导出：${n} | ${e.toFixed(2)}%`)}})):"txt"===e&&(yield async function(e){const t=new Blob([ce(e)],{type:"text/plain;charset=utf-8"});ae.saveAs(t,`${e.title}.info.txt`)}(t)),Q.setExporting(!1)}))}function u(){var e,t;return r(this,void 0,void 0,(function*(){const n=o.pages.filter((e=>"downloaded"!==e.state)).map((e=>()=>function(e){return r(this,void 0,void 0,(function*(){Q.updatePage(Object.assign(Object.assign({},e),{error:null,state:"downloading"}));try{const t=yield function(e,{onProgress:t,...n}){return new Promise(((o,r)=>{let l=0,s=Date.now(),i="0 KB/s";GM_xmlhttpRequest({...n,method:"GET",url:e,responseType:"arraybuffer",timeout:3e5,onprogress(e){const n=Date.now(),o=e.lengthComputable?Number((e.loaded-l)/(n-s)/1.024):-1;(n-s>=1e3||0===l)&&(i=e.lengthComputable?`${o.toFixed(2)} KB/s`:"",l=e.loaded,s=n),t({loaded:e.loaded,total:e.total,progress:e.lengthComputable?e.loaded/e.total:0,progressText:i})},onload(t){try{
+// cache them to reduce waiting time and CPU usage on Chrome with Tampermonkey
+// (Tampermonkey uses a dirty way to give res.response, transfer string to arraybuffer every time)
+// now store progress just spent ~1s instead of ~8s
+const n=t.response,l=n.byteLength,s=t.responseHeaders;let i;if("text"===(s.match(/Content-Type:/i)?s.split(/Content-Type:/i)[1].split("\n")[0].trim().split("/"):["",""])[0]&&(i=(new TextDecoder).decode(new DataView(n))),!n)return void r(new Error(`[CD] Image ${e} download fail: Return empty response`));if(925===l)
+// '403 Access Denied' Image Byte Size
+// GM_xhr only support abort()
+return void r(new Error(`[CD] Image ${e} download fail: 403 Access Denied`));if(28===l)
+// 'An error has occurred. (403)' Length
+return void r(`[CD] Image ${e} download fail: An error has occurred. (403)`);
+// res.status should be detected at here, because we should know are we reached image limits at first
+if(200!==t.status)return void r(new Error(`[CD] Image ${e} download fail: Wrong response status (${t.status})`));o(n)}catch(t){console.error(t),r(new Error(`[CD] Image ${e} download fail: Unknown error (Please send feedback)`))}},onerror(){r(new Error(`[CD] Image ${e} download fail: Network Error`))},ontimeout(){r(new Error(`[CD] Image ${e} download fail: Timed Out`))}})}))}(e.imageUrl,{onProgress:t=>r(this,void 0,void 0,(function*(){var n;Q.updatePage(Object.assign(Object.assign({},e),{meta:t,state:"downloading"})),yield(A(),_),null===(n=c.querySelector(".row.downloading"))||void 0===n||n.scrollIntoView()})),headers:{Referer:e.pageUrl,"X-Alt-Referer":e.pageUrl,Cookie:document.cookie}});Q.updatePage(Object.assign(Object.assign({},e),{buffer:t,state:"downloaded",meta:null}))}catch(t){Q.updatePage(Object.assign(Object.assign({},e),{error:t,state:"error",meta:null}))}}))}(e)));try{for(var s,i=l(te(n,5));!(s=yield i.next()).done;){s.value;if(a)return;Q.setTitle(`已下载：${o.downloadingCount}`)}}catch(t){e={error:t}}finally{try{s&&!s.done&&(t=i.return)&&(yield t.call(i))}finally{if(e)throw e.error}}for(;!a&&o.successCount+o.failCount>=o.pages.length&&o.failCount>0&&confirm("下载未全部完成，是否重试？");)yield u();o.successCount===o.pages.length&&o.pages.every((e=>e.buffer))&&(Q.setDescription(Object.assign(Object.assign({},o.description),{finishedAt:new Date})),yield d("zip")())}))}return function(e){C().$$.on_mount.push(e)}((function(){var e,t;return r(this,void 0,void 0,(function*(){const n={finishedAt:null,introduction:document.querySelector(".asTBcell.uwconn > p").innerText.substring(3),labels:[...document.querySelectorAll(".asTBcell.uwconn > label")].map((e=>e.innerText.trim())),startedAt:new Date,tags:[...document.querySelectorAll(".asTBcell.uwconn .addtags .tagshow")].map((e=>e.innerText.trim())),title:document.querySelector(".userwrap h2").innerText,url:location.href};Q.setLoading(!0),Q.setDescription(n),console.log(`[CD] 开始解析 ${n.title}`);try{for(var r,s=l(le());!(r=yield s.next()).done;){const e=r.value;if(a)return;o.pageTotal||Q.setPageTotal(e.total),Q.setTitle(`已解析：${o.pages.length+1}`),Q.addPage(e)}}catch(t){e={error:t}}finally{try{r&&!r.done&&(t=s.return)&&(yield t.call(s))}finally{if(e)throw e.error}}console.log(`[CD] 解析 ${n.title} 完毕`),Q.setResolved(!0),yield u(),Q.setLoading(!1),Q.setTitle(null)}))})),function(e){C().$$.on_destroy.push(e)}((()=>a=!0)),e.$$set=e=>{"onClose"in e&&n(0,i=e.onClose)},[i,c,o,function(){Q.setFold(!o.fold)},d,function(e){E[e?"unshift":"push"]((()=>{c=e,n(1,c)}))}]}class Ue extends X{constructor(e){var t;super(),Oe.getElementById("svelte-cz9b99-style")||((t=p("style")).id="svelte-cz9b99-style",t.textContent=".container.svelte-cz9b99.svelte-cz9b99{background:#666;border-top-left-radius:5px;border-top-right-radius:5px;border:1px solid #333;bottom:0;color:#eee;font-size:14px;height:30%;margin:0;opacity:98%;padding:0.5rem;position:fixed;right:1rem;width:33%}.btn-close.svelte-cz9b99.svelte-cz9b99,.btn-folder.svelte-cz9b99.svelte-cz9b99{cursor:pointer;float:right;padding:0 5px;border:0;background:transparent;line-height:18px}.btn-folder.svelte-cz9b99.svelte-cz9b99::after{display:inline;content:'▼'}.spinner.svelte-cz9b99.svelte-cz9b99{display:inline}.spinner.svelte-cz9b99.svelte-cz9b99::after{content:'';display:inline;animation:svelte-cz9b99-loading-spinner;animation-duration:5s;animation-iteration-count:infinite}@keyframes svelte-cz9b99-loading-spinner{20%{content:'.'}40%{content:'..'}60%{content:'...'}80%{content:'....'}100%{content:'.....'}}.toolbar.svelte-cz9b99.svelte-cz9b99{display:flex;padding-top:6px}.toolbar.svelte-cz9b99>div.svelte-cz9b99{flex:1}.toolbar.svelte-cz9b99>.buttons.svelte-cz9b99{text-align:right}.fold.svelte-cz9b99 .btn-folder.svelte-cz9b99::after{content:'▲'}.fold.container.svelte-cz9b99.svelte-cz9b99{height:15px}",d(Oe.head,t)),V(this,e,Re,Ie,l,{onClose:0})}}customElements.define("download-button",class extends HTMLAnchorElement{constructor(){super(),this.box=null,this.addEventListener("click",this.showBox)}connectedCallback(){this.className="btn",this.style.width="130px",this.innerText="打包下载漫画"}showBox(e){e.preventDefault(),this.box&&confirm("正在下载中，是否重新下载？")&&this.closeBox();let t=document.getElementById("download-box");t||(t=document.createElement("div"),t.id="download-box",document.body.appendChild(t)),this.box=new Ue({target:t,props:{onClose:()=>this.closeBox()}})}closeBox(){this.box&&(this.box.$destroy(),this.box=null)}},{extends:"a"});document.querySelector(".asTBcell.uwthumb").appendChild(document.createElement("a",{is:"download-button"}))}();
