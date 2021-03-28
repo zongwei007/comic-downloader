@@ -116,15 +116,11 @@
   async function downloadPage(page: Page): Promise<void> {
     state.updatePage({ ...page, error: null, state: 'downloading' });
 
+    tick().then(() => el.querySelector('.row.downloading')?.scrollIntoView());
+
     try {
       const buffer = await downloadImage(page.imageUrl, {
-        onProgress: async meta => {
-          state.updatePage({ ...page, meta, state: 'downloading' });
-
-          await tick();
-
-          el.querySelector('.row.downloading')?.scrollIntoView();
-        },
+        onProgress: meta => state.updatePage({ ...page, meta, state: 'downloading' }),
         headers: { Referer: page.pageUrl, 'X-Alt-Referer': page.pageUrl, Cookie: document.cookie },
       });
 
