@@ -21,7 +21,7 @@
     <slot name="url">
       {#if isDownloading}
         <div class="progress">
-          <div class="progress-bar" style={`width: ${(page.meta?.progress || 0) * 100}`}>
+          <div class="progress-bar" style={`width: ${((page.meta?.progress || 0) * 100).toFixed(2)}px`}>
             {page.meta?.progressText || ''}
           </div>
         </div>

@@ -94,7 +94,7 @@
         return;
       }
 
-      state.setTitle(`已下载：${$state.downloadingCount}`);
+      state.setTitle(`已下载：${$state.successCount}`);
     }
 
     while (
