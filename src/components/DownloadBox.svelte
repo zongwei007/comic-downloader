@@ -68,12 +68,12 @@
         return;
       }
 
-      if (!$state.pageTotal) {
-        state.setPageTotal(page.total);
-      }
-
       state.setTitle(`已解析：${$state.pages.length + 1}`);
       state.addPage(page);
+    }
+
+    if (!$state.pageTotal) {
+      state.setPageTotal($state.pages.length);
     }
 
     console.log(`[CD] 解析 ${comicInfo.title} 完毕`);
@@ -114,7 +114,8 @@
   }
 
   async function downloadPage(page: Page): Promise<void> {
-    state.updatePage({ ...page, error: null, state: 'downloading' });
+    delete page.error;
+    state.updatePage({ ...page, state: 'downloading' });
 
     tick().then(() => el.querySelector('.row.downloading')?.scrollIntoView());
 

@@ -61,9 +61,9 @@ const state = {
     update(state => {
       const [prev] = state.pages.splice(page.index - 1, 1, page);
 
-      if (!prev.error && page.error) {
+      if (prev.state !== 'error' && page.state === 'error') {
         state.failCount++;
-      } else if (prev.error && !page.error) {
+      } else if (prev.state === 'error' && page.state !== 'error') {
         state.failCount--;
       }
 
